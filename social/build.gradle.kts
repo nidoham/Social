@@ -64,7 +64,7 @@ afterEvaluate {
 
                 groupId = "com.github.nidoham"   // Must match GitHub username
                 artifactId = "Social"             // Case-sensitive
-                version = "1.0.1"                 // Use tags or version numbers
+                version = "1.0.2"                 // Use tags or version numbers
 
                 pom {
                     name.set("Social Library")
