@@ -1,7 +1,7 @@
 plugins {
     alias(libs.plugins.android.library)
     alias(libs.plugins.kotlin.android)
-    alias(libs.plugins.maven.publish)
+    alias(libs.plugins.maven.publish) // Maven Publish plugin
 }
 
 android {
@@ -42,7 +42,7 @@ android {
 }
 
 dependencies {
-    // Firebase
+    // Firebase dependencies (as before)
     implementation(platform(libs.firebase.bom))
     implementation(libs.firebase.analytics)
     implementation(libs.firebase.auth)
@@ -55,16 +55,16 @@ dependencies {
     androidTestImplementation(libs.androidx.espresso.core)
 }
 
-// Maven Publishing Configuration
+// JitPack-ready Maven publishing
 afterEvaluate {
     publishing {
         publications {
             create<MavenPublication>("release") {
                 from(components["release"])
 
-                groupId = "com.nidoham"
-                artifactId = "social"
-                version = "1.0.0"
+                groupId = "com.github.nidoham"   // Must match GitHub username
+                artifactId = "Social"             // Case-sensitive
+                version = "1.0.1"                 // Use tags or version numbers
 
                 pom {
                     name.set("Social Library")
@@ -90,29 +90,6 @@ afterEvaluate {
                         developerConnection.set("scm:git:ssh://github.com/nidoham/Social.git")
                         url.set("https://github.com/nidoham/Social")
                     }
-                }
-            }
-        }
-
-        repositories {
-            maven {
-                name = "GitHubPackages"
-                url = uri("https://maven.pkg.github.com/nidoham/Social")
-                credentials {
-                    username = findProperty("gpr.user") as String? ?: "nidoham"
-                    password = findProperty("gpr.token") as String?
-                        ?: System.getenv("GITHUB_TOKEN")
-                                ?: throw GradleException(
-                            """
-                            GitHub token not found!
-                            Please set one of the following:
-                            1. 'gpr.token' in gradle.properties (recommended)
-                            2. 'GITHUB_TOKEN' environment variable
-                            
-                            Get your token from: https://github.com/settings/tokens
-                            Required scopes: read:packages, write:packages, repo
-                            """.trimIndent()
-                        )
                 }
             }
         }
