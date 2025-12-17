@@ -42,17 +42,20 @@ android {
 }
 
 dependencies {
+    // Firebase
     implementation(platform(libs.firebase.bom))
     implementation(libs.firebase.analytics)
     implementation(libs.firebase.auth)
     implementation(libs.firebase.database)
     implementation(libs.firebase.firestore)
 
+    // Testing
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
 }
 
+// Maven Publishing Configuration
 afterEvaluate {
     publishing {
         publications {
@@ -96,10 +99,20 @@ afterEvaluate {
                 name = "GitHubPackages"
                 url = uri("https://maven.pkg.github.com/nidoham/Social")
                 credentials {
-                    username = "nidoham"
+                    username = findProperty("gpr.user") as String? ?: "nidoham"
                     password = findProperty("gpr.token") as String?
                         ?: System.getenv("GITHUB_TOKEN")
-                                ?: throw GradleException("GitHub token not found. Set GITHUB_TOKEN environment variable or gpr.token in gradle.properties")
+                                ?: throw GradleException(
+                            """
+                            GitHub token not found!
+                            Please set one of the following:
+                            1. 'gpr.token' in gradle.properties (recommended)
+                            2. 'GITHUB_TOKEN' environment variable
+                            
+                            Get your token from: https://github.com/settings/tokens
+                            Required scopes: read:packages, write:packages, repo
+                            """.trimIndent()
+                        )
                 }
             }
         }
