@@ -1,38 +1,141 @@
 package com.nidoham.social.model
 
+import com.google.firebase.firestore.Exclude
+import com.google.firebase.firestore.PropertyName
+import com.google.firebase.firestore.ServerTimestamp
+import java.util.Date
+
 /**
  * Contains system-level metadata and story configuration.
  * Handles timestamps, privacy settings, and display options.
+ *
+ * @property createdAt Timestamp when story was created
+ * @property updatedAt Timestamp when story was last updated
+ * @property expiresAt Timestamp when story expires
+ * @property isEdited Whether the story has been edited
+ * @property isDeleted Whether the story has been soft-deleted
+ * @property location Optional location tag
+ * @property isBanned Whether the story has been banned by moderation
+ * @property visibility Who can view this story
+ * @property allowedViewers User IDs for custom visibility (only used when visibility is CUSTOM)
+ * @property duration Duration in seconds per slide
+ * @property backgroundColor Hex color for text-only stories
+ * @property musicUrl Background music URL
+ * @property aspectRatio Aspect ratio for display
  */
 data class StoryMetadata(
-    val createdAt: Long = System.currentTimeMillis(),
-    val updatedAt: Long = System.currentTimeMillis(),
-    val expiresAt: Long = System.currentTimeMillis() + STORY_DURATION_MS,
-    val isEdited: Boolean = false,
-    val isDeleted: Boolean = false,
-    val location: String? = null,
-    val isBanned: Boolean = false,
+    @get:PropertyName("createdAt")
+    @set:PropertyName("createdAt")
+    @ServerTimestamp
+    var createdAt: Date? = null,
 
-    // Privacy settings
-    val visibility: StoryVisibility = StoryVisibility.PUBLIC,
-    val allowedViewers: List<String> = emptyList(), // User IDs for custom visibility
+    @get:PropertyName("updatedAt")
+    @set:PropertyName("updatedAt")
+    @ServerTimestamp
+    var updatedAt: Date? = null,
 
-    // Display settings
-    val duration: Int = DEFAULT_SLIDE_DURATION, // Duration in seconds per slide
-    val backgroundColor: String? = null, // Hex color for text-only stories
-    val musicUrl: String? = null, // Background music URL
-    val aspectRatio: Float = 9f / 16f // Default portrait aspect ratio
+    @get:PropertyName("expiresAt")
+    @set:PropertyName("expiresAt")
+    var expiresAt: Date? = null,
+
+    @get:PropertyName("isEdited")
+    @set:PropertyName("isEdited")
+    var isEdited: Boolean = false,
+
+    @get:PropertyName("isDeleted")
+    @set:PropertyName("isDeleted")
+    var isDeleted: Boolean = false,
+
+    @get:PropertyName("location")
+    @set:PropertyName("location")
+    var location: String? = null,
+
+    @get:PropertyName("isBanned")
+    @set:PropertyName("isBanned")
+    var isBanned: Boolean = false,
+
+    @get:PropertyName("visibility")
+    @set:PropertyName("visibility")
+    var visibility: String = StoryVisibility.PUBLIC.name,
+
+    @get:PropertyName("allowedViewers")
+    @set:PropertyName("allowedViewers")
+    var allowedViewers: List<String> = emptyList(),
+
+    @get:PropertyName("duration")
+    @set:PropertyName("duration")
+    var duration: Int = DEFAULT_SLIDE_DURATION,
+
+    @get:PropertyName("backgroundColor")
+    @set:PropertyName("backgroundColor")
+    var backgroundColor: String? = null,
+
+    @get:PropertyName("musicUrl")
+    @set:PropertyName("musicUrl")
+    var musicUrl: String? = null,
+
+    @get:PropertyName("aspectRatio")
+    @set:PropertyName("aspectRatio")
+    var aspectRatio: Float = DEFAULT_ASPECT_RATIO
 ) {
     /**
-     * Check if viewer has permission to see this story
+     * No-arg constructor required by Firestore
      */
-    fun canView(viewerId: String, authorId: String): Boolean {
+    constructor() : this(
+        createdAt = null,
+        updatedAt = null,
+        expiresAt = null
+    )
+
+    init {
+        require(duration > 0) { "Duration must be positive" }
+        require(aspectRatio > 0) { "Aspect ratio must be positive" }
+    }
+
+    /**
+     * Get visibility as enum
+     * @return StoryVisibility enum value
+     */
+    @Exclude
+    fun getVisibilityEnum(): StoryVisibility = StoryVisibility.fromString(visibility)
+
+    /**
+     * Set visibility from enum
+     * @param newVisibility The new visibility setting
+     */
+    @Exclude
+    fun setVisibilityEnum(newVisibility: StoryVisibility) {
+        visibility = newVisibility.name
+    }
+
+    /**
+     * Check if viewer has permission to see this story
+     * @param viewerId ID of the user attempting to view
+     * @param authorId ID of the story author
+     * @param friendIds Set of user IDs who are friends with the viewer (optional)
+     * @return true if viewer has permission
+     */
+    @Exclude
+    fun canView(
+        viewerId: String?,
+        authorId: String?,
+        friendIds: Set<String>? = null
+    ): Boolean {
+        // Null safety checks
+        if (viewerId.isNullOrBlank() || authorId.isNullOrBlank()) return false
+
         // Author can always view their own story
         if (viewerId == authorId) return true
 
-        return when (visibility) {
+        // Banned or deleted stories cannot be viewed (except by author)
+        if (isBanned || isDeleted) return false
+
+        // Check expiration
+        if (isExpired()) return false
+
+        return when (getVisibilityEnum()) {
             StoryVisibility.PUBLIC -> true
-            StoryVisibility.FRIENDS -> true // Would need friend check in real implementation
+            StoryVisibility.FRIENDS -> friendIds?.contains(authorId) ?: false
             StoryVisibility.CUSTOM -> viewerId in allowedViewers
             StoryVisibility.PRIVATE -> false
         }
@@ -40,14 +143,24 @@ data class StoryMetadata(
 
     /**
      * Get remaining time until expiration in milliseconds
+     * @return Remaining time in milliseconds, or 0 if expired/null
      */
-    fun getRemainingTime(): Long = (expiresAt - System.currentTimeMillis()).coerceAtLeast(0L)
+    @Exclude
+    fun getRemainingTime(): Long {
+        val expiryTime = expiresAt?.time ?: return 0L
+        val remaining = expiryTime - System.currentTimeMillis()
+        return maxOf(0L, remaining)
+    }
 
     /**
-     * Get remaining time as formatted string (e.g., "2h", "45m", "10s")
+     * Get remaining time as formatted string
+     * @return Formatted string (e.g., "2h", "45m", "10s")
      */
+    @Exclude
     fun getRemainingTimeFormatted(): String {
         val remaining = getRemainingTime()
+        if (remaining == 0L) return "0s"
+
         val hours = remaining / (1000 * 60 * 60)
         val minutes = (remaining / (1000 * 60)) % 60
         val seconds = (remaining / 1000) % 60
@@ -60,19 +173,90 @@ data class StoryMetadata(
     }
 
     /**
-     * Check if story is still within its lifetime
+     * Check if story has expired
+     * @return true if current time is past expiration
      */
-    fun isValid(): Boolean = System.currentTimeMillis() < expiresAt
+    @Exclude
+    fun isExpired(): Boolean {
+        val expiryTime = expiresAt?.time ?: return false
+        return System.currentTimeMillis() > expiryTime
+    }
+
+    /**
+     * Check if story is still within its lifetime
+     * @return true if not expired
+     */
+    @Exclude
+    fun isValid(): Boolean = !isExpired()
 
     /**
      * Update the updatedAt timestamp
+     * @return New StoryMetadata instance with updated timestamp
      */
     fun markAsUpdated(): StoryMetadata {
-        return copy(updatedAt = System.currentTimeMillis())
+        return copy(
+            updatedAt = Date(),
+            isEdited = true
+        )
+    }
+
+    /**
+     * Mark story as deleted
+     * @return New StoryMetadata instance marked as deleted
+     */
+    fun markAsDeleted(): StoryMetadata {
+        return copy(isDeleted = true, updatedAt = Date())
+    }
+
+    /**
+     * Mark story as banned
+     * @return New StoryMetadata instance marked as banned
+     */
+    fun markAsBanned(): StoryMetadata {
+        return copy(isBanned = true, updatedAt = Date())
+    }
+
+    /**
+     * Validate backgroundColor is a valid hex color if present
+     * @return true if valid or null
+     */
+    @Exclude
+    fun hasValidBackgroundColor(): Boolean {
+        val color = backgroundColor ?: return true
+        return color.matches(Regex("^#([A-Fa-f0-9]{6}|[A-Fa-f0-9]{8})$"))
+    }
+
+    /**
+     * Validate all fields are within acceptable ranges
+     * @return true if all validations pass
+     */
+    @Exclude
+    fun isDataValid(): Boolean {
+        return duration > 0 &&
+                aspectRatio > 0 &&
+                hasValidBackgroundColor() &&
+                StoryVisibility.isValid(visibility)
     }
 
     companion object {
         const val STORY_DURATION_MS = 24 * 60 * 60 * 1000L // 24 hours
         const val DEFAULT_SLIDE_DURATION = 5 // seconds
+        const val DEFAULT_ASPECT_RATIO = 9f / 16f // Portrait aspect ratio
+        const val MIN_DURATION = 1 // Minimum 1 second
+        const val MAX_DURATION = 15 // Maximum 15 seconds
+
+        /**
+         * Create default metadata for a new story
+         * @return StoryMetadata with default values
+         */
+        fun createDefault(): StoryMetadata {
+            val now = Date()
+            val expiry = Date(now.time + STORY_DURATION_MS)
+            return StoryMetadata(
+                createdAt = now,
+                updatedAt = now,
+                expiresAt = expiry
+            )
+        }
     }
 }

@@ -2,6 +2,7 @@ package com.nidoham.social.repository
 
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.Query
+import com.google.firebase.firestore.FieldValue
 import com.nidoham.social.model.*
 import kotlinx.coroutines.tasks.await
 
@@ -18,14 +19,19 @@ class StoryRepository(
 
     /**
      * Create a new story
+     * FIXED: Generate ID if not provided
      */
     suspend fun createStory(story: Story): Result<String> {
         return try {
-            storiesCollection.document(story.id)
-                .set(story)
+            // Generate ID if not provided
+            val storyId = story.id ?: storiesCollection.document().id
+            val storyWithId = story.copy(id = storyId)
+
+            storiesCollection.document(storyId)
+                .set(storyWithId)
                 .await()
 
-            Result.success(story.id)
+            Result.success(storyId)
         } catch (e: Exception) {
             Result.failure(e)
         }
@@ -48,7 +54,7 @@ class StoryRepository(
      * Get all active stories (not expired, not deleted, not banned)
      * Ordered by creation time (newest first)
      *
-     * FIXED: Simplified query to avoid complex index requirements
+     * FIXED: Proper Date to Long comparison
      */
     suspend fun getActiveStories(limit: Int = 50): Result<List<Story>> {
         return try {
@@ -67,7 +73,7 @@ class StoryRepository(
             }.filter { story ->
                 !story.metadata.isDeleted &&
                         !story.metadata.isBanned &&
-                        story.metadata.expiresAt > currentTime
+                        (story.metadata.expiresAt?.time ?: 0L) > currentTime
             }.take(limit) // Take only the requested limit after filtering
 
             Result.success(stories)
@@ -79,6 +85,7 @@ class StoryRepository(
     /**
      * Alternative: Get active stories with simpler query
      * Uses single field ordering to avoid index requirements
+     * FIXED: Proper Date to Long comparison
      */
     suspend fun getActiveStoriesSimple(limit: Int = 50): Result<List<Story>> {
         return try {
@@ -107,7 +114,6 @@ class StoryRepository(
 
     /**
      * Get stories by author ID
-     * FIXED: Simplified to single orderBy
      */
     suspend fun getStoriesByAuthor(authorId: String, limit: Int = 20): Result<List<Story>> {
         return try {
@@ -127,7 +133,7 @@ class StoryRepository(
 
     /**
      * Get active stories by author ID (not expired, not deleted)
-     * FIXED: In-memory filtering to avoid complex indexes
+     * FIXED: Proper Date to Long comparison
      */
     suspend fun getActiveStoriesByAuthor(authorId: String): Result<List<Story>> {
         return try {
@@ -144,7 +150,7 @@ class StoryRepository(
                 doc.toObject(Story::class.java)
             }.filter { story ->
                 !story.metadata.isDeleted &&
-                        story.metadata.expiresAt > currentTime
+                        (story.metadata.expiresAt?.time ?: 0L) > currentTime
             }
 
             Result.success(stories)
@@ -158,11 +164,13 @@ class StoryRepository(
      */
     suspend fun updateStory(story: Story): Result<Unit> {
         return try {
+            require(!story.id.isNullOrBlank()) { "Story ID cannot be null or blank" }
+
             val updatedStory = story.copy(
                 metadata = story.metadata.markAsUpdated()
             )
 
-            storiesCollection.document(story.id)
+            storiesCollection.document(story.id!!)
                 .set(updatedStory)
                 .await()
 
@@ -174,13 +182,14 @@ class StoryRepository(
 
     /**
      * Update story caption
+     * FIXED: Use FieldValue.serverTimestamp() for proper timestamp
      */
     suspend fun updateCaption(storyId: String, caption: String): Result<Unit> {
         return try {
             val updates = mapOf(
                 "caption" to caption,
                 "metadata.isEdited" to true,
-                "metadata.updatedAt" to System.currentTimeMillis()
+                "metadata.updatedAt" to FieldValue.serverTimestamp()
             )
 
             storiesCollection.document(storyId)
@@ -195,12 +204,11 @@ class StoryRepository(
 
     /**
      * Increment view count
-     * FIXED: Use FieldValue.increment() instead of read-then-write
      */
     suspend fun incrementViewCount(storyId: String): Result<Unit> {
         return try {
             storiesCollection.document(storyId)
-                .update("stats.viewCount", com.google.firebase.firestore.FieldValue.increment(1))
+                .update("stats.viewCount", FieldValue.increment(1))
                 .await()
 
             Result.success(Unit)
@@ -216,7 +224,7 @@ class StoryRepository(
         return try {
             val fieldPath = "stats.reactionCounts.${reactionType.name}"
             storiesCollection.document(storyId)
-                .update(fieldPath, com.google.firebase.firestore.FieldValue.increment(1))
+                .update(fieldPath, FieldValue.increment(1))
                 .await()
 
             Result.success(Unit)
@@ -232,7 +240,7 @@ class StoryRepository(
         return try {
             val fieldPath = "stats.reactionCounts.${reactionType.name}"
             storiesCollection.document(storyId)
-                .update(fieldPath, com.google.firebase.firestore.FieldValue.increment(-1))
+                .update(fieldPath, FieldValue.increment(-1))
                 .await()
 
             Result.success(Unit)
@@ -243,12 +251,11 @@ class StoryRepository(
 
     /**
      * Increment reply count
-     * FIXED: Use FieldValue.increment()
      */
     suspend fun incrementReplyCount(storyId: String): Result<Unit> {
         return try {
             storiesCollection.document(storyId)
-                .update("stats.replyCount", com.google.firebase.firestore.FieldValue.increment(1))
+                .update("stats.replyCount", FieldValue.increment(1))
                 .await()
 
             Result.success(Unit)
@@ -259,12 +266,11 @@ class StoryRepository(
 
     /**
      * Increment share count
-     * FIXED: Use FieldValue.increment()
      */
     suspend fun incrementShareCount(storyId: String): Result<Unit> {
         return try {
             storiesCollection.document(storyId)
-                .update("stats.shareCount", com.google.firebase.firestore.FieldValue.increment(1))
+                .update("stats.shareCount", FieldValue.increment(1))
                 .await()
 
             Result.success(Unit)
@@ -275,12 +281,13 @@ class StoryRepository(
 
     /**
      * Soft delete story (mark as deleted)
+     * FIXED: Use FieldValue.serverTimestamp() for proper timestamp
      */
     suspend fun deleteStory(storyId: String): Result<Unit> {
         return try {
             val updates = mapOf(
                 "metadata.isDeleted" to true,
-                "metadata.updatedAt" to System.currentTimeMillis()
+                "metadata.updatedAt" to FieldValue.serverTimestamp()
             )
 
             storiesCollection.document(storyId)
@@ -310,12 +317,13 @@ class StoryRepository(
 
     /**
      * Ban story (admin action)
+     * FIXED: Use FieldValue.serverTimestamp() for proper timestamp
      */
     suspend fun banStory(storyId: String): Result<Unit> {
         return try {
             val updates = mapOf(
                 "metadata.isBanned" to true,
-                "metadata.updatedAt" to System.currentTimeMillis()
+                "metadata.updatedAt" to FieldValue.serverTimestamp()
             )
 
             storiesCollection.document(storyId)
@@ -330,7 +338,7 @@ class StoryRepository(
 
     /**
      * Get stories by visibility type
-     * FIXED: Simplified query with in-memory filtering
+     * FIXED: Proper Date to Long comparison
      */
     suspend fun getStoriesByVisibility(
         visibility: StoryVisibility,
@@ -351,7 +359,7 @@ class StoryRepository(
                 doc.toObject(Story::class.java)
             }.filter { story ->
                 !story.metadata.isDeleted &&
-                        story.metadata.expiresAt > currentTime
+                        (story.metadata.expiresAt?.time ?: 0L) > currentTime
             }.take(limit)
 
             Result.success(stories)
@@ -362,10 +370,11 @@ class StoryRepository(
 
     /**
      * Delete expired stories (cleanup task)
+     * FIXED: Use proper Date comparison by querying with Date object
      */
     suspend fun deleteExpiredStories(): Result<Int> {
         return try {
-            val currentTime = System.currentTimeMillis()
+            val currentTime = java.util.Date()
 
             val documents = storiesCollection
                 .whereLessThan("metadata.expiresAt", currentTime)
