@@ -47,22 +47,58 @@ class StoryRepository(
     /**
      * Get all active stories (not expired, not deleted, not banned)
      * Ordered by creation time (newest first)
+     *
+     * FIXED: Simplified query to avoid complex index requirements
      */
     suspend fun getActiveStories(limit: Int = 50): Result<List<Story>> {
         return try {
             val currentTime = System.currentTimeMillis()
 
+            // Fetch all recent stories first, then filter in-memory
             val documents = storiesCollection
-                .whereEqualTo("metadata.isDeleted", false)
-                .whereEqualTo("metadata.isBanned", false)
-                .whereGreaterThan("metadata.expiresAt", currentTime)
-                .orderBy("metadata.expiresAt", Query.Direction.DESCENDING)
                 .orderBy("metadata.createdAt", Query.Direction.DESCENDING)
-                .limit(limit.toLong())
+                .limit(limit.toLong() * 2) // Fetch more to account for filtering
                 .get()
                 .await()
 
-            val stories = documents.mapNotNull { it.toObject(Story::class.java) }
+            // Filter active stories in-memory
+            val stories = documents.mapNotNull { doc ->
+                doc.toObject(Story::class.java)
+            }.filter { story ->
+                !story.metadata.isDeleted &&
+                        !story.metadata.isBanned &&
+                        story.metadata.expiresAt > currentTime
+            }.take(limit) // Take only the requested limit after filtering
+
+            Result.success(stories)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Alternative: Get active stories with simpler query
+     * Uses single field ordering to avoid index requirements
+     */
+    suspend fun getActiveStoriesSimple(limit: Int = 50): Result<List<Story>> {
+        return try {
+            val currentTime = System.currentTimeMillis()
+
+            // Query only by expiresAt to avoid complex indexes
+            val documents = storiesCollection
+                .whereGreaterThan("metadata.expiresAt", currentTime)
+                .orderBy("metadata.expiresAt", Query.Direction.DESCENDING)
+                .limit(limit.toLong() * 2)
+                .get()
+                .await()
+
+            // Filter in-memory for deleted and banned
+            val stories = documents.mapNotNull { doc ->
+                doc.toObject(Story::class.java)
+            }.filter { story ->
+                !story.metadata.isDeleted && !story.metadata.isBanned
+            }.take(limit)
+
             Result.success(stories)
         } catch (e: Exception) {
             Result.failure(e)
@@ -71,6 +107,7 @@ class StoryRepository(
 
     /**
      * Get stories by author ID
+     * FIXED: Simplified to single orderBy
      */
     suspend fun getStoriesByAuthor(authorId: String, limit: Int = 20): Result<List<Story>> {
         return try {
@@ -90,6 +127,7 @@ class StoryRepository(
 
     /**
      * Get active stories by author ID (not expired, not deleted)
+     * FIXED: In-memory filtering to avoid complex indexes
      */
     suspend fun getActiveStoriesByAuthor(authorId: String): Result<List<Story>> {
         return try {
@@ -97,14 +135,18 @@ class StoryRepository(
 
             val documents = storiesCollection
                 .whereEqualTo("authorId", authorId)
-                .whereEqualTo("metadata.isDeleted", false)
-                .whereGreaterThan("metadata.expiresAt", currentTime)
-                .orderBy("metadata.expiresAt", Query.Direction.DESCENDING)
                 .orderBy("metadata.createdAt", Query.Direction.DESCENDING)
                 .get()
                 .await()
 
-            val stories = documents.mapNotNull { it.toObject(Story::class.java) }
+            // Filter active stories in-memory
+            val stories = documents.mapNotNull { doc ->
+                doc.toObject(Story::class.java)
+            }.filter { story ->
+                !story.metadata.isDeleted &&
+                        story.metadata.expiresAt > currentTime
+            }
+
             Result.success(stories)
         } catch (e: Exception) {
             Result.failure(e)
@@ -153,21 +195,15 @@ class StoryRepository(
 
     /**
      * Increment view count
+     * FIXED: Use FieldValue.increment() instead of read-then-write
      */
     suspend fun incrementViewCount(storyId: String): Result<Unit> {
         return try {
-            val result = getStoryById(storyId)
-            result.getOrNull()?.let { story ->
-                val updatedStats = story.stats.copy(
-                    viewCount = story.stats.viewCount + 1
-                )
+            storiesCollection.document(storyId)
+                .update("stats.viewCount", com.google.firebase.firestore.FieldValue.increment(1))
+                .await()
 
-                storiesCollection.document(storyId)
-                    .update("stats.viewCount", updatedStats.viewCount)
-                    .await()
-
-                Result.success(Unit)
-            } ?: Result.failure(Exception("Story not found"))
+            Result.success(Unit)
         } catch (e: Exception) {
             Result.failure(e)
         }
@@ -178,16 +214,12 @@ class StoryRepository(
      */
     suspend fun addReaction(storyId: String, reactionType: ReactionType): Result<Unit> {
         return try {
-            val result = getStoryById(storyId)
-            result.getOrNull()?.let { story ->
-                val updatedStats = story.stats.incrementReaction(reactionType)
+            val fieldPath = "stats.reactionCounts.${reactionType.name}"
+            storiesCollection.document(storyId)
+                .update(fieldPath, com.google.firebase.firestore.FieldValue.increment(1))
+                .await()
 
-                storiesCollection.document(storyId)
-                    .update("stats.reactionCounts", updatedStats.reactionCounts)
-                    .await()
-
-                Result.success(Unit)
-            } ?: Result.failure(Exception("Story not found"))
+            Result.success(Unit)
         } catch (e: Exception) {
             Result.failure(e)
         }
@@ -198,16 +230,12 @@ class StoryRepository(
      */
     suspend fun removeReaction(storyId: String, reactionType: ReactionType): Result<Unit> {
         return try {
-            val result = getStoryById(storyId)
-            result.getOrNull()?.let { story ->
-                val updatedStats = story.stats.decrementReaction(reactionType)
+            val fieldPath = "stats.reactionCounts.${reactionType.name}"
+            storiesCollection.document(storyId)
+                .update(fieldPath, com.google.firebase.firestore.FieldValue.increment(-1))
+                .await()
 
-                storiesCollection.document(storyId)
-                    .update("stats.reactionCounts", updatedStats.reactionCounts)
-                    .await()
-
-                Result.success(Unit)
-            } ?: Result.failure(Exception("Story not found"))
+            Result.success(Unit)
         } catch (e: Exception) {
             Result.failure(e)
         }
@@ -215,21 +243,15 @@ class StoryRepository(
 
     /**
      * Increment reply count
+     * FIXED: Use FieldValue.increment()
      */
     suspend fun incrementReplyCount(storyId: String): Result<Unit> {
         return try {
-            val result = getStoryById(storyId)
-            result.getOrNull()?.let { story ->
-                val updatedStats = story.stats.copy(
-                    replyCount = story.stats.replyCount + 1
-                )
+            storiesCollection.document(storyId)
+                .update("stats.replyCount", com.google.firebase.firestore.FieldValue.increment(1))
+                .await()
 
-                storiesCollection.document(storyId)
-                    .update("stats.replyCount", updatedStats.replyCount)
-                    .await()
-
-                Result.success(Unit)
-            } ?: Result.failure(Exception("Story not found"))
+            Result.success(Unit)
         } catch (e: Exception) {
             Result.failure(e)
         }
@@ -237,21 +259,15 @@ class StoryRepository(
 
     /**
      * Increment share count
+     * FIXED: Use FieldValue.increment()
      */
     suspend fun incrementShareCount(storyId: String): Result<Unit> {
         return try {
-            val result = getStoryById(storyId)
-            result.getOrNull()?.let { story ->
-                val updatedStats = story.stats.copy(
-                    shareCount = story.stats.shareCount + 1
-                )
+            storiesCollection.document(storyId)
+                .update("stats.shareCount", com.google.firebase.firestore.FieldValue.increment(1))
+                .await()
 
-                storiesCollection.document(storyId)
-                    .update("stats.shareCount", updatedStats.shareCount)
-                    .await()
-
-                Result.success(Unit)
-            } ?: Result.failure(Exception("Story not found"))
+            Result.success(Unit)
         } catch (e: Exception) {
             Result.failure(e)
         }
@@ -314,6 +330,7 @@ class StoryRepository(
 
     /**
      * Get stories by visibility type
+     * FIXED: Simplified query with in-memory filtering
      */
     suspend fun getStoriesByVisibility(
         visibility: StoryVisibility,
@@ -324,15 +341,19 @@ class StoryRepository(
 
             val documents = storiesCollection
                 .whereEqualTo("metadata.visibility", visibility.name)
-                .whereEqualTo("metadata.isDeleted", false)
-                .whereGreaterThan("metadata.expiresAt", currentTime)
-                .orderBy("metadata.expiresAt", Query.Direction.DESCENDING)
                 .orderBy("metadata.createdAt", Query.Direction.DESCENDING)
-                .limit(limit.toLong())
+                .limit(limit.toLong() * 2)
                 .get()
                 .await()
 
-            val stories = documents.mapNotNull { it.toObject(Story::class.java) }
+            // Filter in-memory for active stories
+            val stories = documents.mapNotNull { doc ->
+                doc.toObject(Story::class.java)
+            }.filter { story ->
+                !story.metadata.isDeleted &&
+                        story.metadata.expiresAt > currentTime
+            }.take(limit)
+
             Result.success(stories)
         } catch (e: Exception) {
             Result.failure(e)
