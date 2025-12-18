@@ -45,15 +45,6 @@ data class UserStats(
      */
     constructor() : this(0L, 0L, 0L, 0L, 0L, 0L)
 
-    init {
-        require(postCount >= 0) { "Post count cannot be negative" }
-        require(followerCount >= 0) { "Follower count cannot be negative" }
-        require(followingCount >= 0) { "Following count cannot be negative" }
-        require(storyCount >= 0) { "Story count cannot be negative" }
-        require(likeCount >= 0) { "Like count cannot be negative" }
-        require(commentCount >= 0) { "Comment count cannot be negative" }
-    }
-
     /**
      * Get follower-to-following ratio
      * @return Ratio, or null if followingCount is 0

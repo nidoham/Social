@@ -80,17 +80,23 @@ data class StoryMetadata(
 ) {
     /**
      * No-arg constructor required by Firestore
+     * FIXED: Added all parameters to prevent init block issues
      */
     constructor() : this(
         createdAt = null,
         updatedAt = null,
-        expiresAt = null
+        expiresAt = null,
+        isEdited = false,
+        isDeleted = false,
+        location = null,
+        isBanned = false,
+        visibility = StoryVisibility.PUBLIC.name,
+        allowedViewers = emptyList(),
+        duration = DEFAULT_SLIDE_DURATION,
+        backgroundColor = null,
+        musicUrl = null,
+        aspectRatio = DEFAULT_ASPECT_RATIO
     )
-
-    init {
-        require(duration > 0) { "Duration must be positive" }
-        require(aspectRatio > 0) { "Aspect ratio must be positive" }
-    }
 
     /**
      * Get visibility as enum
@@ -228,6 +234,7 @@ data class StoryMetadata(
 
     /**
      * Validate all fields are within acceptable ranges
+     * FIXED: Now does validation without throwing exceptions (safe for Firestore)
      * @return true if all validations pass
      */
     @Exclude

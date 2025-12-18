@@ -34,12 +34,8 @@ data class StoryStats(
      */
     constructor() : this(emptyMap(), 0L, 0L, 0L)
 
-    init {
-        require(viewCount >= 0) { "View count cannot be negative" }
-        require(replyCount >= 0) { "Reply count cannot be negative" }
-        require(shareCount >= 0) { "Share count cannot be negative" }
-        require(reactionCounts.values.all { it >= 0 }) { "Reaction counts cannot be negative" }
-    }
+    // REMOVED init block to fix Firestore deserialization issue
+    // Validation is now done through isValid() method
 
     /**
      * Get count for a specific reaction type
@@ -177,6 +173,7 @@ data class StoryStats(
 
     /**
      * Validate that all stats are valid (non-negative)
+     * FIXED: Now does validation without throwing exceptions (safe for Firestore)
      * @return true if all counts are >= 0
      */
     @Exclude

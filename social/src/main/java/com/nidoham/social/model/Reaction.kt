@@ -23,10 +23,6 @@ data class Reaction(
      */
     constructor() : this(ReactionType.LIKE, 0L)
 
-    init {
-        require(count >= 0) { "Reaction count cannot be negative" }
-    }
-
     /**
      * Increment reaction count
      * @return New Reaction instance with incremented count

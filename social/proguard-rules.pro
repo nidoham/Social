@@ -1,21 +1,50 @@
-# Add project specific ProGuard rules here.
-# You can control the set of applied configuration files using the
-# proguardFiles setting in build.gradle.
-#
-# For more details, see
-#   http://developer.android.com/guide/developing/tools/proguard.html
+# Firestore Model Classes - CRITICAL for deserialization
+-keepclassmembers class com.nidoham.social.model.** {
+    <init>();
+    <fields>;
+}
 
-# If your project uses WebView with JS, uncomment the following
-# and specify the fully qualified class name to the JavaScript interface
-# class:
-#-keepclassmembers class fqcn.of.javascript.interface.for.webview {
-#   public *;
-#}
+-keep class com.nidoham.social.model.Story { *; }
+-keep class com.nidoham.social.model.Reaction { *; }
+-keep class com.nidoham.social.model.ReactionType { *; }
 
-# Uncomment this to preserve the line number information for
-# debugging stack traces.
-#-keepattributes SourceFile,LineNumberTable
+# Keep all model constructors
+-keepclassmembers class com.nidoham.social.model.** {
+    public <init>();
+    public <init>(...);
+}
 
-# If you keep the line number information, uncomment this to
-# hide the original source file name.
-#-renamesourcefileattribute SourceFile
+# Keep PropertyName annotations
+-keepattributes *Annotation*
+-keep class com.google.firebase.firestore.PropertyName { *; }
+
+# Firebase Firestore
+-keep class com.google.firebase.** { *; }
+-keep class com.google.android.gms.** { *; }
+-dontwarn com.google.firebase.**
+-dontwarn com.google.android.gms.**
+
+# Keep enum classes and their methods
+-keepclassmembers enum * {
+    public static **[] values();
+    public static ** valueOf(java.lang.String);
+}
+
+# Keep Kotlin metadata
+-keep class kotlin.Metadata { *; }
+
+# Keep data class generated methods
+-keepclassmembers class * {
+    public ** component1();
+    public ** component2();
+    public ** component3();
+    public ** component4();
+    public ** component5();
+    public ** copy(...);
+}
+
+# ServerTimestamp annotation
+-keep class com.google.firebase.firestore.ServerTimestamp { *; }
+-keepclassmembers class * {
+    @com.google.firebase.firestore.ServerTimestamp <fields>;
+}

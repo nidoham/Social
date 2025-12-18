@@ -80,15 +80,6 @@ data class UserProfile(
         birthDate = null
     )
 
-    init {
-        require(username.isBlank() || isValidUsername(username)) {
-            "Username must be 3-30 characters and contain only letters, numbers, underscores, and dots"
-        }
-        require(email.isBlank() || isValidEmail(email)) {
-            "Invalid email format"
-        }
-    }
-
     /**
      * Get formatted username with @ prefix
      * @return Username prefixed with @
