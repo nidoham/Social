@@ -3,15 +3,14 @@ package com.nidoham.social.model
 import com.google.firebase.firestore.Exclude
 import com.google.firebase.firestore.PropertyName
 import com.google.firebase.firestore.ServerTimestamp
-import java.util.Date
 
 /**
  * Contains system-level metadata and story configuration.
  * Handles timestamps, privacy settings, and display options.
  *
- * @property createdAt Timestamp when story was created
- * @property updatedAt Timestamp when story was last updated
- * @property expiresAt Timestamp when story expires
+ * @property createdAt Timestamp when story was created (milliseconds)
+ * @property updatedAt Timestamp when story was last updated (milliseconds)
+ * @property expiresAt Timestamp when story expires (milliseconds)
  * @property isEdited Whether the story has been edited
  * @property isDeleted Whether the story has been soft-deleted
  * @property location Optional location tag
@@ -27,16 +26,16 @@ data class StoryMetadata(
     @get:PropertyName("createdAt")
     @set:PropertyName("createdAt")
     @ServerTimestamp
-    var createdAt: Date? = null,
+    var createdAt: Long? = null,
 
     @get:PropertyName("updatedAt")
     @set:PropertyName("updatedAt")
     @ServerTimestamp
-    var updatedAt: Date? = null,
+    var updatedAt: Long? = null,
 
     @get:PropertyName("expiresAt")
     @set:PropertyName("expiresAt")
-    var expiresAt: Date? = null,
+    var expiresAt: Long? = null,
 
     @get:PropertyName("isEdited")
     @set:PropertyName("isEdited")
@@ -153,7 +152,7 @@ data class StoryMetadata(
      */
     @Exclude
     fun getRemainingTime(): Long {
-        val expiryTime = expiresAt?.time ?: return 0L
+        val expiryTime = expiresAt ?: return 0L
         val remaining = expiryTime - System.currentTimeMillis()
         return maxOf(0L, remaining)
     }
@@ -184,7 +183,7 @@ data class StoryMetadata(
      */
     @Exclude
     fun isExpired(): Boolean {
-        val expiryTime = expiresAt?.time ?: return false
+        val expiryTime = expiresAt ?: return false
         return System.currentTimeMillis() > expiryTime
     }
 
@@ -201,7 +200,7 @@ data class StoryMetadata(
      */
     fun markAsUpdated(): StoryMetadata {
         return copy(
-            updatedAt = Date(),
+            updatedAt = System.currentTimeMillis(),
             isEdited = true
         )
     }
@@ -211,7 +210,7 @@ data class StoryMetadata(
      * @return New StoryMetadata instance marked as deleted
      */
     fun markAsDeleted(): StoryMetadata {
-        return copy(isDeleted = true, updatedAt = Date())
+        return copy(isDeleted = true, updatedAt = System.currentTimeMillis())
     }
 
     /**
@@ -219,7 +218,7 @@ data class StoryMetadata(
      * @return New StoryMetadata instance marked as banned
      */
     fun markAsBanned(): StoryMetadata {
-        return copy(isBanned = true, updatedAt = Date())
+        return copy(isBanned = true, updatedAt = System.currentTimeMillis())
     }
 
     /**
@@ -257,8 +256,8 @@ data class StoryMetadata(
          * @return StoryMetadata with default values
          */
         fun createDefault(): StoryMetadata {
-            val now = Date()
-            val expiry = Date(now.time + STORY_DURATION_MS)
+            val now = System.currentTimeMillis()
+            val expiry = now + STORY_DURATION_MS
             return StoryMetadata(
                 createdAt = now,
                 updatedAt = now,

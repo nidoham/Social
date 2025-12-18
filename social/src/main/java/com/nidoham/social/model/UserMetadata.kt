@@ -3,27 +3,26 @@ package com.nidoham.social.model
 import com.google.firebase.firestore.Exclude
 import com.google.firebase.firestore.PropertyName
 import com.google.firebase.firestore.ServerTimestamp
-import java.util.Date
 import java.util.concurrent.TimeUnit
 
 /**
  * Contains system-level metadata and account status.
  * Useful for auditing, account management, and security.
  *
- * @property createdAt Timestamp when account was created
- * @property updatedAt Timestamp when account was last updated
- * @property lastLoginAt Timestamp of last successful login
- * @property lastLogoutAt Timestamp of last logout
+ * @property createdAt Timestamp when account was created (milliseconds)
+ * @property updatedAt Timestamp when account was last updated (milliseconds)
+ * @property lastLoginAt Timestamp of last successful login (milliseconds)
+ * @property lastLogoutAt Timestamp of last logout (milliseconds)
  * @property isVerified Whether the user's email/identity is verified
  * @property isActive Whether the account is active (not suspended/deleted)
  * @property isBanned Whether the account has been banned
  * @property isPrivate Whether the account is set to private mode
  * @property suspensionReason Optional reason for account suspension
- * @property suspendedUntil Optional timestamp for temporary suspension end
- * @property emailVerifiedAt Timestamp when email was verified
- * @property phoneVerifiedAt Timestamp when phone was verified
+ * @property suspendedUntil Optional timestamp for temporary suspension end (milliseconds)
+ * @property emailVerifiedAt Timestamp when email was verified (milliseconds)
+ * @property phoneVerifiedAt Timestamp when phone was verified (milliseconds)
  * @property twoFactorEnabled Whether 2FA is enabled
- * @property lastPasswordChangeAt Timestamp of last password change
+ * @property lastPasswordChangeAt Timestamp of last password change (milliseconds)
  * @property deviceId Last device ID used for login
  * @property ipAddress Last IP address used for login
  */
@@ -31,20 +30,20 @@ data class UserMetadata(
     @get:PropertyName("createdAt")
     @set:PropertyName("createdAt")
     @ServerTimestamp
-    var createdAt: Date? = null,
+    var createdAt: Long? = null,
 
     @get:PropertyName("updatedAt")
     @set:PropertyName("updatedAt")
     @ServerTimestamp
-    var updatedAt: Date? = null,
+    var updatedAt: Long? = null,
 
     @get:PropertyName("lastLoginAt")
     @set:PropertyName("lastLoginAt")
-    var lastLoginAt: Date? = null,
+    var lastLoginAt: Long? = null,
 
     @get:PropertyName("lastLogoutAt")
     @set:PropertyName("lastLogoutAt")
-    var lastLogoutAt: Date? = null,
+    var lastLogoutAt: Long? = null,
 
     @get:PropertyName("isVerified")
     @set:PropertyName("isVerified")
@@ -68,15 +67,15 @@ data class UserMetadata(
 
     @get:PropertyName("suspendedUntil")
     @set:PropertyName("suspendedUntil")
-    var suspendedUntil: Date? = null,
+    var suspendedUntil: Long? = null,
 
     @get:PropertyName("emailVerifiedAt")
     @set:PropertyName("emailVerifiedAt")
-    var emailVerifiedAt: Date? = null,
+    var emailVerifiedAt: Long? = null,
 
     @get:PropertyName("phoneVerifiedAt")
     @set:PropertyName("phoneVerifiedAt")
-    var phoneVerifiedAt: Date? = null,
+    var phoneVerifiedAt: Long? = null,
 
     @get:PropertyName("twoFactorEnabled")
     @set:PropertyName("twoFactorEnabled")
@@ -84,7 +83,7 @@ data class UserMetadata(
 
     @get:PropertyName("lastPasswordChangeAt")
     @set:PropertyName("lastPasswordChangeAt")
-    var lastPasswordChangeAt: Date? = null,
+    var lastPasswordChangeAt: Long? = null,
 
     @get:PropertyName("deviceId")
     @set:PropertyName("deviceId")
@@ -110,8 +109,8 @@ data class UserMetadata(
      */
     @Exclude
     fun isLoggedIn(): Boolean {
-        val login = lastLoginAt?.time ?: return false
-        val logout = lastLogoutAt?.time ?: return true
+        val login = lastLoginAt ?: return false
+        val logout = lastLogoutAt ?: return true
         return login > logout
     }
 
@@ -121,7 +120,7 @@ data class UserMetadata(
      */
     @Exclude
     fun isSuspended(): Boolean {
-        val suspendedTo = suspendedUntil?.time ?: return false
+        val suspendedTo = suspendedUntil ?: return false
         return System.currentTimeMillis() < suspendedTo
     }
 
@@ -161,7 +160,7 @@ data class UserMetadata(
      */
     @Exclude
     fun getAccountAgeInDays(): Long {
-        val created = createdAt?.time ?: return 0L
+        val created = createdAt ?: return 0L
         val ageInMillis = System.currentTimeMillis() - created
         return TimeUnit.MILLISECONDS.toDays(ageInMillis)
     }
@@ -172,7 +171,7 @@ data class UserMetadata(
      */
     @Exclude
     fun getHoursSinceLastLogin(): Long? {
-        val login = lastLoginAt?.time ?: return null
+        val login = lastLoginAt ?: return null
         val elapsed = System.currentTimeMillis() - login
         return TimeUnit.MILLISECONDS.toHours(elapsed)
     }
@@ -183,8 +182,8 @@ data class UserMetadata(
      */
     @Exclude
     fun getMinutesSinceLastActivity(): Long? {
-        val login = lastLoginAt?.time ?: 0L
-        val update = updatedAt?.time ?: 0L
+        val login = lastLoginAt ?: 0L
+        val update = updatedAt ?: 0L
         val lastActivity = maxOf(login, update)
 
         if (lastActivity == 0L) return null
@@ -221,7 +220,7 @@ data class UserMetadata(
     @Exclude
     fun getRemainingSupensionDays(): Long {
         if (!isSuspended()) return 0L
-        val suspendedTo = suspendedUntil?.time ?: return 0L
+        val suspendedTo = suspendedUntil ?: return 0L
         val remaining = suspendedTo - System.currentTimeMillis()
         return TimeUnit.MILLISECONDS.toDays(remaining)
     }
@@ -232,7 +231,7 @@ data class UserMetadata(
      */
     @Exclude
     fun needsPasswordChange(): Boolean {
-        val lastChange = lastPasswordChangeAt?.time ?: createdAt?.time ?: return false
+        val lastChange = lastPasswordChangeAt ?: createdAt ?: return false
         val daysSinceChange = TimeUnit.MILLISECONDS.toDays(
             System.currentTimeMillis() - lastChange
         )
@@ -244,7 +243,7 @@ data class UserMetadata(
      * @return New UserMetadata with updated timestamp
      */
     fun markAsUpdated(): UserMetadata {
-        return copy(updatedAt = Date())
+        return copy(updatedAt = System.currentTimeMillis())
     }
 
     /**
@@ -255,7 +254,7 @@ data class UserMetadata(
      */
     fun markLogin(deviceId: String? = null, ipAddress: String? = null): UserMetadata {
         return copy(
-            lastLoginAt = Date(),
+            lastLoginAt = System.currentTimeMillis(),
             deviceId = deviceId ?: this.deviceId,
             ipAddress = ipAddress ?: this.ipAddress
         )
@@ -266,7 +265,7 @@ data class UserMetadata(
      * @return New UserMetadata with logout timestamp
      */
     fun markLogout(): UserMetadata {
-        return copy(lastLogoutAt = Date())
+        return copy(lastLogoutAt = System.currentTimeMillis())
     }
 
     /**
@@ -275,9 +274,9 @@ data class UserMetadata(
      */
     fun markEmailVerified(): UserMetadata {
         return copy(
-            emailVerifiedAt = Date(),
+            emailVerifiedAt = System.currentTimeMillis(),
             isVerified = isPhoneVerified() || emailVerifiedAt != null,
-            updatedAt = Date()
+            updatedAt = System.currentTimeMillis()
         )
     }
 
@@ -287,9 +286,9 @@ data class UserMetadata(
      */
     fun markPhoneVerified(): UserMetadata {
         return copy(
-            phoneVerifiedAt = Date(),
+            phoneVerifiedAt = System.currentTimeMillis(),
             isVerified = isEmailVerified() || phoneVerifiedAt != null,
-            updatedAt = Date()
+            updatedAt = System.currentTimeMillis()
         )
     }
 
@@ -298,7 +297,7 @@ data class UserMetadata(
      * @return New UserMetadata with 2FA enabled
      */
     fun enableTwoFactor(): UserMetadata {
-        return copy(twoFactorEnabled = true, updatedAt = Date())
+        return copy(twoFactorEnabled = true, updatedAt = System.currentTimeMillis())
     }
 
     /**
@@ -306,7 +305,7 @@ data class UserMetadata(
      * @return New UserMetadata with 2FA disabled
      */
     fun disableTwoFactor(): UserMetadata {
-        return copy(twoFactorEnabled = false, updatedAt = Date())
+        return copy(twoFactorEnabled = false, updatedAt = System.currentTimeMillis())
     }
 
     /**
@@ -314,7 +313,10 @@ data class UserMetadata(
      * @return New UserMetadata with password change timestamp
      */
     fun markPasswordChanged(): UserMetadata {
-        return copy(lastPasswordChangeAt = Date(), updatedAt = Date())
+        return copy(
+            lastPasswordChangeAt = System.currentTimeMillis(),
+            updatedAt = System.currentTimeMillis()
+        )
     }
 
     /**
@@ -327,12 +329,12 @@ data class UserMetadata(
         require(reason.isNotBlank()) { "Suspension reason cannot be blank" }
         require(durationDays > 0) { "Suspension duration must be positive" }
 
-        val suspendUntil = Date(System.currentTimeMillis() + TimeUnit.DAYS.toMillis(durationDays))
+        val suspendUntil = System.currentTimeMillis() + TimeUnit.DAYS.toMillis(durationDays)
         return copy(
             isActive = false,
             suspensionReason = reason,
             suspendedUntil = suspendUntil,
-            updatedAt = Date()
+            updatedAt = System.currentTimeMillis()
         )
     }
 
@@ -345,7 +347,7 @@ data class UserMetadata(
             isActive = true,
             suspensionReason = null,
             suspendedUntil = null,
-            updatedAt = Date()
+            updatedAt = System.currentTimeMillis()
         )
     }
 
@@ -360,7 +362,7 @@ data class UserMetadata(
             isBanned = true,
             isActive = false,
             suspensionReason = reason,
-            updatedAt = Date()
+            updatedAt = System.currentTimeMillis()
         )
     }
 
@@ -373,7 +375,7 @@ data class UserMetadata(
             isBanned = false,
             isActive = true,
             suspensionReason = null,
-            updatedAt = Date()
+            updatedAt = System.currentTimeMillis()
         )
     }
 
@@ -382,7 +384,7 @@ data class UserMetadata(
      * @return New UserMetadata with account deactivated
      */
     fun deactivate(): UserMetadata {
-        return copy(isActive = false, updatedAt = Date())
+        return copy(isActive = false, updatedAt = System.currentTimeMillis())
     }
 
     /**
@@ -390,7 +392,7 @@ data class UserMetadata(
      * @return New UserMetadata with account reactivated
      */
     fun reactivate(): UserMetadata {
-        return copy(isActive = true, updatedAt = Date())
+        return copy(isActive = true, updatedAt = System.currentTimeMillis())
     }
 
     /**
@@ -398,7 +400,7 @@ data class UserMetadata(
      * @return New UserMetadata with privacy toggled
      */
     fun togglePrivacy(): UserMetadata {
-        return copy(isPrivate = !isPrivate, updatedAt = Date())
+        return copy(isPrivate = !isPrivate, updatedAt = System.currentTimeMillis())
     }
 
     companion object {
@@ -407,7 +409,7 @@ data class UserMetadata(
          * @return UserMetadata with default values
          */
         fun createDefault(): UserMetadata {
-            val now = Date()
+            val now = System.currentTimeMillis()
             return UserMetadata(
                 createdAt = now,
                 updatedAt = now,

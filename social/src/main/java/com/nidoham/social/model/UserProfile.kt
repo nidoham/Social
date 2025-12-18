@@ -2,7 +2,6 @@ package com.nidoham.social.model
 
 import com.google.firebase.firestore.Exclude
 import com.google.firebase.firestore.PropertyName
-import java.util.Date
 
 /**
  * Contains the public-facing profile information of a user.
@@ -16,7 +15,7 @@ import java.util.Date
  * @property website Optional website or social media link
  * @property gender Optional gender identity
  * @property pronouns Optional preferred pronouns (e.g., "they/them", "she/her")
- * @property birthDate Date of birth (stored as timestamp)
+ * @property birthDate Date of birth (stored as timestamp in milliseconds)
  * @property location Optional location/city
  * @property phoneNumber Optional verified phone number
  */
@@ -59,7 +58,7 @@ data class UserProfile(
 
     @get:PropertyName("birthDate")
     @set:PropertyName("birthDate")
-    var birthDate: Date? = null,
+    var birthDate: Long? = null,
 
     @get:PropertyName("location")
     @set:PropertyName("location")
@@ -94,8 +93,8 @@ data class UserProfile(
     @Exclude
     fun getAge(): Int? {
         val birth = birthDate ?: return null
-        val now = Date()
-        val ageInMillis = now.time - birth.time
+        val now = System.currentTimeMillis()
+        val ageInMillis = now - birth
         return (ageInMillis / (365.25 * 24 * 60 * 60 * 1000)).toInt()
     }
 
@@ -255,7 +254,7 @@ data class UserProfile(
             displayName: String,
             email: String,
             avatarUrl: String,
-            birthDate: Date
+            birthDate: Long
         ): UserProfile {
             require(isValidUsername(username)) { "Invalid username format" }
             require(displayName.isNotBlank()) { "Display name cannot be blank" }

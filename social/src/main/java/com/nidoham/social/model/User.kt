@@ -352,7 +352,7 @@ data class User(
          * @param displayName User's display name
          * @param email User's email
          * @param avatarUrl URL to avatar image
-         * @param birthDate Date of birth
+         * @param birthDate Date of birth (timestamp in milliseconds)
          * @return New User instance
          */
         fun create(
@@ -360,7 +360,7 @@ data class User(
             displayName: String,
             email: String,
             avatarUrl: String,
-            birthDate: java.util.Date
+            birthDate: Long
         ): User {
             return User(
                 profile = UserProfile.create(

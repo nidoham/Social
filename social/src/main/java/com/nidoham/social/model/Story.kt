@@ -162,7 +162,7 @@ data class Story(
      */
     @Exclude
     fun getAgeInMillis(): Long {
-        val created = metadata.createdAt?.time ?: return 0L
+        val created = metadata.createdAt ?: return 0L
         return System.currentTimeMillis() - created
     }
 

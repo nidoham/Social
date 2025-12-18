@@ -10,7 +10,6 @@ import com.nidoham.social.model.UserMetadata
 import com.nidoham.social.model.UserProfile
 import com.nidoham.social.model.UserStats
 import kotlinx.coroutines.tasks.await
-import java.util.Date
 
 /**
  * Repository for managing user data across Firebase services.
@@ -51,14 +50,26 @@ class UserRepository(
     suspend fun createUser(firebaseUser: FirebaseUser): Result<String> {
         return try {
             val userId = firebaseUser.uid
-            val user = buildUserFromFirebaseUser(firebaseUser, userId)
 
-            // Save to Firestore
+            // 1. Build initial user object
+            var user = buildUserFromFirebaseUser(firebaseUser, userId)
+
+            // 2. Ensure username uniqueness before writing
+            val isTaken = !isUsernameAvailable(user.profile.username).getOrDefault(true)
+            if (isTaken) {
+                // If generated username is taken, append random numbers
+                val newProfile = user.profile.copy(
+                    username = "${user.profile.username}${(100..999).random()}"
+                )
+                user = user.copy(profile = newProfile)
+            }
+
+            // 3. Save to Firestore
             usersCollection.document(userId)
                 .set(user)
                 .await()
 
-            // Save to Realtime Database
+            // 4. Save to Realtime Database
             usersRealtimeRef.child(userId)
                 .setValue(user)
                 .await()
@@ -83,19 +94,22 @@ class UserRepository(
     }
 
     /**
-     * Update user profile
+     * Update user (Generic)
+     * Syncs changes to both Firestore and Realtime DB
      */
     suspend fun updateUser(userId: String, user: User): Result<Unit> {
         return try {
-            // Update the metadata with current timestamp
+            // Update the metadata with current timestamp (Long)
             val updatedUser = user.copy(
-                metadata = user.metadata.markAsUpdated()
+                metadata = user.metadata.markAsUpdated() // Ensure this method in model returns Long for updatedAt
             )
 
+            // Write to Firestore first (Source of Truth)
             usersCollection.document(userId)
                 .set(updatedUser)
                 .await()
 
+            // Sync to Realtime DB
             usersRealtimeRef.child(userId)
                 .setValue(updatedUser)
                 .await()
@@ -115,35 +129,21 @@ class UserRepository(
         ipAddress: String? = null
     ): Result<Unit> {
         return try {
-            // Get the current user
             val userResult = getUserById(userId)
-            if (userResult.isFailure) {
-                return Result.failure(userResult.exceptionOrNull() ?: Exception("User not found"))
-            }
-
-            val user = userResult.getOrNull() ?: return Result.failure(Exception("User not found"))
+            val user = userResult.getOrNull()
+                ?: return Result.failure(Exception("User not found"))
 
             // Update using the model's method
             val updatedUser = user.login(deviceId, ipAddress)
 
-            // Save to Firestore
-            usersCollection.document(userId)
-                .set(updatedUser)
-                .await()
-
-            // Save to Realtime Database
-            usersRealtimeRef.child(userId)
-                .setValue(updatedUser)
-                .await()
-
-            Result.success(Unit)
+            updateUser(userId, updatedUser)
         } catch (e: Exception) {
             Result.failure(e)
         }
     }
 
     /**
-     * Update user profile information
+     * Update user profile specific fields
      */
     suspend fun updateUserProfile(
         userId: String,
@@ -158,11 +158,8 @@ class UserRepository(
     ): Result<Unit> {
         return try {
             val userResult = getUserById(userId)
-            if (userResult.isFailure) {
-                return Result.failure(userResult.exceptionOrNull() ?: Exception("User not found"))
-            }
-
-            val user = userResult.getOrNull() ?: return Result.failure(Exception("User not found"))
+            val user = userResult.getOrNull()
+                ?: return Result.failure(Exception("User not found"))
 
             val updatedUser = user.updateProfile(
                 displayName = displayName,
@@ -175,32 +172,47 @@ class UserRepository(
                 gender = gender
             )
 
-            return updateUser(userId, updatedUser)
+            updateUser(userId, updatedUser)
         } catch (e: Exception) {
             Result.failure(e)
         }
     }
 
     /**
-     * Follow a user
+     * Follow a user using a Firestore Transaction.
+     * Ensures both the Current User and Target User are updated atomically.
      */
     suspend fun followUser(currentUserId: String, targetUserId: String): Result<Unit> {
         return try {
-            // Update current user's following count
-            val currentUserResult = getUserById(currentUserId)
-            if (currentUserResult.isFailure) {
-                return Result.failure(currentUserResult.exceptionOrNull() ?: Exception("Current user not found"))
-            }
-            val currentUser = currentUserResult.getOrNull() ?: return Result.failure(Exception("Current user not found"))
-            updateUser(currentUserId, currentUser.follow())
+            firestore.runTransaction { transaction ->
+                val currentUserRef = usersCollection.document(currentUserId)
+                val targetUserRef = usersCollection.document(targetUserId)
 
-            // Update target user's follower count
-            val targetUserResult = getUserById(targetUserId)
-            if (targetUserResult.isFailure) {
-                return Result.failure(targetUserResult.exceptionOrNull() ?: Exception("Target user not found"))
+                val currentUserSnap = transaction.get(currentUserRef)
+                val targetUserSnap = transaction.get(targetUserRef)
+
+                val currentUser = currentUserSnap.toObject(User::class.java)
+                    ?: throw Exception("Current user not found")
+                val targetUser = targetUserSnap.toObject(User::class.java)
+                    ?: throw Exception("Target user not found")
+
+                // Apply logic
+                val updatedCurrentUser = currentUser.follow()
+                val updatedTargetUser = targetUser.gainFollower()
+
+                // Write back to Firestore
+                transaction.set(currentUserRef, updatedCurrentUser)
+                transaction.set(targetUserRef, updatedTargetUser)
+
+                // Note: We cannot transact Realtime DB here easily.
+                // We update Firestore atomically, then update Realtime DB afterwards (best effort).
+                // Returning the updated users to update Realtime DB outside the transaction block
+                Pair(updatedCurrentUser, updatedTargetUser)
+            }.await().let { (updatedCurrent, updatedTarget) ->
+                // Sync to Realtime DB (Best Effort)
+                usersRealtimeRef.child(currentUserId).setValue(updatedCurrent)
+                usersRealtimeRef.child(targetUserId).setValue(updatedTarget)
             }
-            val targetUser = targetUserResult.getOrNull() ?: return Result.failure(Exception("Target user not found"))
-            updateUser(targetUserId, targetUser.gainFollower())
 
             Result.success(Unit)
         } catch (e: Exception) {
@@ -209,25 +221,34 @@ class UserRepository(
     }
 
     /**
-     * Unfollow a user
+     * Unfollow a user using a Firestore Transaction.
      */
     suspend fun unfollowUser(currentUserId: String, targetUserId: String): Result<Unit> {
         return try {
-            // Update current user's following count
-            val currentUserResult = getUserById(currentUserId)
-            if (currentUserResult.isFailure) {
-                return Result.failure(currentUserResult.exceptionOrNull() ?: Exception("Current user not found"))
-            }
-            val currentUser = currentUserResult.getOrNull() ?: return Result.failure(Exception("Current user not found"))
-            updateUser(currentUserId, currentUser.unfollow())
+            firestore.runTransaction { transaction ->
+                val currentUserRef = usersCollection.document(currentUserId)
+                val targetUserRef = usersCollection.document(targetUserId)
 
-            // Update target user's follower count
-            val targetUserResult = getUserById(targetUserId)
-            if (targetUserResult.isFailure) {
-                return Result.failure(targetUserResult.exceptionOrNull() ?: Exception("Target user not found"))
+                val currentUserSnap = transaction.get(currentUserRef)
+                val targetUserSnap = transaction.get(targetUserRef)
+
+                val currentUser = currentUserSnap.toObject(User::class.java)
+                    ?: throw Exception("Current user not found")
+                val targetUser = targetUserSnap.toObject(User::class.java)
+                    ?: throw Exception("Target user not found")
+
+                // Apply logic
+                val updatedCurrentUser = currentUser.unfollow()
+                val updatedTargetUser = targetUser.loseFollower()
+
+                transaction.set(currentUserRef, updatedCurrentUser)
+                transaction.set(targetUserRef, updatedTargetUser)
+
+                Pair(updatedCurrentUser, updatedTargetUser)
+            }.await().let { (updatedCurrent, updatedTarget) ->
+                usersRealtimeRef.child(currentUserId).setValue(updatedCurrent)
+                usersRealtimeRef.child(targetUserId).setValue(updatedTarget)
             }
-            val targetUser = targetUserResult.getOrNull() ?: return Result.failure(Exception("Target user not found"))
-            updateUser(targetUserId, targetUser.loseFollower())
 
             Result.success(Unit)
         } catch (e: Exception) {
@@ -242,6 +263,7 @@ class UserRepository(
         return try {
             val normalizedQuery = query.lowercase().trim()
 
+            // Note: This query requires a Firestore Index on 'profile.username'
             val documents = usersCollection
                 .whereGreaterThanOrEqualTo("profile.username", normalizedQuery)
                 .whereLessThanOrEqualTo("profile.username", normalizedQuery + '\uf8ff')
@@ -282,7 +304,8 @@ class UserRepository(
         firebaseUser: FirebaseUser,
         userId: String
     ): User {
-        val currentTime = Date()
+        // FIXED: Changed Date() to System.currentTimeMillis() (Long)
+        val currentTime: Long = System.currentTimeMillis()
         val displayName = firebaseUser.displayName ?: ""
         val email = firebaseUser.email ?: ""
         val photoUrl = firebaseUser.photoUrl?.toString() ?: ""
@@ -299,7 +322,7 @@ class UserRepository(
                 website = null,
                 gender = null,
                 pronouns = null,
-                birthDate = null, // Should be set during onboarding
+                birthDate = null,
                 location = null,
                 phoneNumber = null
             ),
@@ -312,9 +335,9 @@ class UserRepository(
                 commentCount = 0L
             ),
             metadata = UserMetadata(
-                createdAt = currentTime,
-                updatedAt = currentTime,
-                lastLoginAt = currentTime,
+                createdAt = currentTime, // Long
+                updatedAt = currentTime, // Long
+                lastLoginAt = currentTime, // Long
                 lastLogoutAt = null,
                 isVerified = firebaseUser.isEmailVerified,
                 isActive = true,
@@ -322,7 +345,7 @@ class UserRepository(
                 isPrivate = false,
                 suspensionReason = null,
                 suspendedUntil = null,
-                emailVerifiedAt = if (firebaseUser.isEmailVerified) currentTime else null,
+                emailVerifiedAt = if (firebaseUser.isEmailVerified) currentTime else null, // Long
                 phoneVerifiedAt = null,
                 twoFactorEnabled = false,
                 lastPasswordChangeAt = null,
