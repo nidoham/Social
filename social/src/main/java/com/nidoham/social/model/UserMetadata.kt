@@ -2,7 +2,6 @@ package com.nidoham.social.model
 
 import com.google.firebase.firestore.Exclude
 import com.google.firebase.firestore.PropertyName
-import com.google.firebase.firestore.ServerTimestamp
 import java.util.concurrent.TimeUnit
 
 /**
@@ -29,12 +28,10 @@ import java.util.concurrent.TimeUnit
 data class UserMetadata(
     @get:PropertyName("createdAt")
     @set:PropertyName("createdAt")
-    @ServerTimestamp
     var createdAt: Long? = null,
 
     @get:PropertyName("updatedAt")
     @set:PropertyName("updatedAt")
-    @ServerTimestamp
     var updatedAt: Long? = null,
 
     @get:PropertyName("lastLoginAt")

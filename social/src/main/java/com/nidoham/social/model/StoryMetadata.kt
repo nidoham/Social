@@ -2,7 +2,6 @@ package com.nidoham.social.model
 
 import com.google.firebase.firestore.Exclude
 import com.google.firebase.firestore.PropertyName
-import com.google.firebase.firestore.ServerTimestamp
 
 /**
  * Contains system-level metadata and story configuration.
@@ -25,12 +24,10 @@ import com.google.firebase.firestore.ServerTimestamp
 data class StoryMetadata(
     @get:PropertyName("createdAt")
     @set:PropertyName("createdAt")
-    @ServerTimestamp
     var createdAt: Long? = null,
 
     @get:PropertyName("updatedAt")
     @set:PropertyName("updatedAt")
-    @ServerTimestamp
     var updatedAt: Long? = null,
 
     @get:PropertyName("expiresAt")
