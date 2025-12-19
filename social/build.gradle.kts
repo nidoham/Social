@@ -1,7 +1,8 @@
 plugins {
     alias(libs.plugins.android.library)
     alias(libs.plugins.kotlin.android)
-    alias(libs.plugins.maven.publish) // Maven Publish plugin
+    alias(libs.plugins.maven.publish)
+    id("kotlin-kapt")
 }
 
 android {
@@ -42,12 +43,19 @@ android {
 }
 
 dependencies {
-    // Firebase dependencies (as before)
+    // Firebase
     implementation(platform(libs.firebase.bom))
     implementation(libs.firebase.analytics)
     implementation(libs.firebase.auth)
     implementation(libs.firebase.database)
     implementation(libs.firebase.firestore)
+
+    // Room Database
+    implementation(libs.androidx.room.runtime)
+    implementation(libs.androidx.room.ktx)
+    kapt(libs.androidx.room.compiler)
+
+    implementation(libs.gson)
 
     // Testing
     testImplementation(libs.junit)
@@ -55,16 +63,15 @@ dependencies {
     androidTestImplementation(libs.androidx.espresso.core)
 }
 
-// JitPack-ready Maven publishing
 afterEvaluate {
     publishing {
         publications {
             create<MavenPublication>("release") {
                 from(components["release"])
 
-                groupId = "com.github.nidoham"   // Must match GitHub username
-                artifactId = "Social"             // Case-sensitive
-                version = "1.0.9"                 // Use tags or version numbers
+                groupId = "com.github.nidoham"
+                artifactId = "Social"
+                version = "1.0.10"
 
                 pom {
                     name.set("Social Library")
