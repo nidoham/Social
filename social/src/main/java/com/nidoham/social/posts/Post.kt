@@ -5,7 +5,6 @@ import androidx.room.Ignore
 import androidx.room.PrimaryKey
 import com.google.firebase.firestore.DocumentId
 import com.google.firebase.firestore.IgnoreExtraProperties
-import com.nidoham.social.reaction.Reaction
 
 /**
  * Represents a post in the social media application.
@@ -37,10 +36,6 @@ data class Post(
     val hashtagsString: String = "", // Comma-separated hashtags
     val mentionsString: String = "" // Comma-separated mentions
 ) {
-    // Reactions are not stored in Room, only fetched from Firestore
-    @Ignore
-    var reactions: Reaction = Reaction()
-
     // No-argument constructor for Firestore
     constructor() : this(
         id = "",
@@ -64,21 +59,24 @@ data class Post(
         mentionsString = ""
     )
 
-    // Helper properties for Firestore compatibility
+    // Helper properties for working with lists (excluded from both Room and Firestore persistence)
     @get:com.google.firebase.firestore.Exclude
+    @get:Ignore
     val mediaUrls: List<String>
         get() = if (mediaUrlsString.isBlank()) emptyList()
-        else mediaUrlsString.split(",").map { it.trim() }
+        else mediaUrlsString.split(",").map { it.trim() }.filter { it.isNotEmpty() }
 
     @get:com.google.firebase.firestore.Exclude
+    @get:Ignore
     val hashtags: List<String>
         get() = if (hashtagsString.isBlank()) emptyList()
-        else hashtagsString.split(",").map { it.trim() }
+        else hashtagsString.split(",").map { it.trim() }.filter { it.isNotEmpty() }
 
     @get:com.google.firebase.firestore.Exclude
+    @get:Ignore
     val mentions: List<String>
         get() = if (mentionsString.isBlank()) emptyList()
-        else mentionsString.split(",").map { it.trim() }
+        else mentionsString.split(",").map { it.trim() }.filter { it.isNotEmpty() }
 
     companion object {
         fun create(
@@ -91,7 +89,6 @@ data class Post(
             updatedAt: Long = System.currentTimeMillis(),
             visibility: String = "public",
             location: String? = null,
-            reactions: Reaction = Reaction(),
             commentsCount: Int = 0,
             sharesCount: Int = 0,
             viewsCount: Int = 0,
@@ -103,7 +100,7 @@ data class Post(
             hashtags: List<String> = emptyList(),
             mentions: List<String> = emptyList()
         ): Post {
-            val post = Post(
+            return Post(
                 id = id,
                 authorId = authorId,
                 content = content,
@@ -124,8 +121,6 @@ data class Post(
                 hashtagsString = hashtags.joinToString(","),
                 mentionsString = mentions.joinToString(",")
             )
-            post.reactions = reactions
-            return post
         }
     }
 }
