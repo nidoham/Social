@@ -19,7 +19,7 @@ data class PostWithAuthor(
     val contentType: Story.ContentType get() = Story.ContentType.fromString(post.contentType)
     val createdAt: Long get() = post.createdAt
     val viewsCount: Int get() = post.viewsCount
-    val reactionsCount: Int get() = post.reactions.likes
+    val reactionsCount: Int get() = post.reactions.getTotalCount()
 
     /**
      * Quick access to author properties

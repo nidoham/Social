@@ -1,9 +1,8 @@
-
 package com.nidoham.social.posts
 
 import androidx.room.Entity
+import androidx.room.Ignore
 import androidx.room.PrimaryKey
-import androidx.room.TypeConverters
 import com.google.firebase.firestore.DocumentId
 import com.google.firebase.firestore.IgnoreExtraProperties
 import com.nidoham.social.reaction.Reaction
@@ -11,27 +10,7 @@ import com.nidoham.social.reaction.Reaction
 /**
  * Represents a post in the social media application.
  * This entity is used for both Room database storage and Firebase Firestore.
- *
- * @property id Unique identifier for the post
- * @property authorId ID of the user who created the post
- * @property content Content of the post
- * @property contentType Type of content in the post (text, image, video)
- * @property mediaUrls List of URLs to media files associated with the post
- * @property createdAt Timestamp when the post was created
- * @property updatedAt Timestamp when the post was last updated
- * @property visibility Visibility setting for the post
- * @property location Optional location associated with the post
- * @property reactions Reaction object containing reaction counts
- * @property commentsCount Number of comments on the post
- * @property sharesCount Number of shares of the post
- * @property viewsCount Count of views on the post
- * @property isSponsored Indicates if the post is sponsored
- * @property isPinned Indicates if the post is pinned
- * @property isDeleted Indicates if the post has been deleted
- * @property isBanned Indicates if the post is banned
- * @property status Status of the post
- * @property hashtags List of hashtags used in the post
- * @property mentions List of user IDs mentioned in the post
+ * Reactions are stored separately in Firestore subcollection: /posts/{postId}/reactions/
  */
 @Entity(tableName = "posts")
 @IgnoreExtraProperties
@@ -42,12 +21,11 @@ data class Post(
     val authorId: String = "",
     val content: String = "",
     val contentType: String = "text",
-    val mediaUrls: List<String> = emptyList(),
+    val mediaUrlsString: String = "", // Comma-separated URLs
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis(),
     val visibility: String = "public",
     val location: String? = null,
-    val reactions: Reaction = Reaction(),
     val commentsCount: Int = 0,
     val sharesCount: Int = 0,
     val viewsCount: Int = 0,
@@ -56,21 +34,24 @@ data class Post(
     val isDeleted: Boolean = false,
     val isBanned: Boolean = false,
     val status: String = "active",
-    val hashtags: List<String> = emptyList(),
-    val mentions: List<String> = emptyList()
+    val hashtagsString: String = "", // Comma-separated hashtags
+    val mentionsString: String = "" // Comma-separated mentions
 ) {
+    // Reactions are not stored in Room, only fetched from Firestore
+    @Ignore
+    var reactions: Reaction = Reaction()
+
     // No-argument constructor for Firestore
     constructor() : this(
         id = "",
         authorId = "",
         content = "",
         contentType = "text",
-        mediaUrls = emptyList(),
+        mediaUrlsString = "",
         createdAt = System.currentTimeMillis(),
         updatedAt = System.currentTimeMillis(),
         visibility = "public",
         location = null,
-        reactions = Reaction(),
         commentsCount = 0,
         sharesCount = 0,
         viewsCount = 0,
@@ -79,7 +60,72 @@ data class Post(
         isDeleted = false,
         isBanned = false,
         status = "active",
-        hashtags = emptyList(),
-        mentions = emptyList()
+        hashtagsString = "",
+        mentionsString = ""
     )
+
+    // Helper properties for Firestore compatibility
+    @get:com.google.firebase.firestore.Exclude
+    val mediaUrls: List<String>
+        get() = if (mediaUrlsString.isBlank()) emptyList()
+        else mediaUrlsString.split(",").map { it.trim() }
+
+    @get:com.google.firebase.firestore.Exclude
+    val hashtags: List<String>
+        get() = if (hashtagsString.isBlank()) emptyList()
+        else hashtagsString.split(",").map { it.trim() }
+
+    @get:com.google.firebase.firestore.Exclude
+    val mentions: List<String>
+        get() = if (mentionsString.isBlank()) emptyList()
+        else mentionsString.split(",").map { it.trim() }
+
+    companion object {
+        fun create(
+            id: String = "",
+            authorId: String = "",
+            content: String = "",
+            contentType: String = "text",
+            mediaUrls: List<String> = emptyList(),
+            createdAt: Long = System.currentTimeMillis(),
+            updatedAt: Long = System.currentTimeMillis(),
+            visibility: String = "public",
+            location: String? = null,
+            reactions: Reaction = Reaction(),
+            commentsCount: Int = 0,
+            sharesCount: Int = 0,
+            viewsCount: Int = 0,
+            isSponsored: Boolean = false,
+            isPinned: Boolean = false,
+            isDeleted: Boolean = false,
+            isBanned: Boolean = false,
+            status: String = "active",
+            hashtags: List<String> = emptyList(),
+            mentions: List<String> = emptyList()
+        ): Post {
+            val post = Post(
+                id = id,
+                authorId = authorId,
+                content = content,
+                contentType = contentType,
+                mediaUrlsString = mediaUrls.joinToString(","),
+                createdAt = createdAt,
+                updatedAt = updatedAt,
+                visibility = visibility,
+                location = location,
+                commentsCount = commentsCount,
+                sharesCount = sharesCount,
+                viewsCount = viewsCount,
+                isSponsored = isSponsored,
+                isPinned = isPinned,
+                isDeleted = isDeleted,
+                isBanned = isBanned,
+                status = status,
+                hashtagsString = hashtags.joinToString(","),
+                mentionsString = mentions.joinToString(",")
+            )
+            post.reactions = reactions
+            return post
+        }
+    }
 }

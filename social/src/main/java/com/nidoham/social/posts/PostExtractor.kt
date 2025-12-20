@@ -4,6 +4,7 @@ import android.content.Context
 import com.google.firebase.firestore.DocumentSnapshot
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.Query
+import com.nidoham.social.reaction.Reaction
 import com.nidoham.social.user.UserExtractor
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -15,6 +16,7 @@ import kotlinx.coroutines.withContext
 /**
  * PostExtractor handles post data operations with Firestore and Room caching
  * Implements cache-first strategy and fetches posts with their authors
+ * Reactions are stored in subcollection: /posts/{postId}/reactions/{reactionType}
  */
 class PostExtractor(private val context: Context) {
 
@@ -33,12 +35,13 @@ class PostExtractor(private val context: Context) {
 
     /**
      * Push a post to Firestore and update cache
+     * Reactions are stored in subcollection: /posts/{postId}/reactions/{reactionType}
      * @param post Post to push
      * @return Result indicating success or failure
      */
     suspend fun pushPost(post: Post): Result<Unit> = withContext(Dispatchers.IO) {
         try {
-            // Convert post to map for Firestore
+            // Convert post to map for Firestore (without reactions)
             val postMap = hashMapOf(
                 "id" to post.id,
                 "authorId" to post.authorId,
@@ -49,11 +52,6 @@ class PostExtractor(private val context: Context) {
                 "updatedAt" to post.updatedAt,
                 "visibility" to post.visibility,
                 "location" to post.location,
-                "reactions" to hashMapOf(
-                    "likes" to post.reactions.likes,
-                    "loves" to post.reactions.loves,
-                    "wows" to post.reactions.wows,
-                ),
                 "commentsCount" to post.commentsCount,
                 "sharesCount" to post.sharesCount,
                 "viewsCount" to post.viewsCount,
@@ -66,12 +64,30 @@ class PostExtractor(private val context: Context) {
                 "mentions" to post.mentions
             )
 
-            // Push to Firestore
+            // Push post to Firestore
             postsCollection.document(post.id)
                 .set(postMap)
                 .await()
 
-            // Update cache
+            // Push reactions to subcollection as individual documents
+            val reactionsRef = postsCollection.document(post.id).collection("reactions")
+
+            reactionsRef.document("likes").set(mapOf("value" to post.reactions.likes)).await()
+            reactionsRef.document("loves").set(mapOf("value" to post.reactions.loves)).await()
+            reactionsRef.document("hooray").set(mapOf("value" to post.reactions.hooray)).await()
+            reactionsRef.document("wows").set(mapOf("value" to post.reactions.wows)).await()
+            reactionsRef.document("kisses").set(mapOf("value" to post.reactions.kisses)).await()
+            reactionsRef.document("emojis").set(mapOf("value" to post.reactions.emojis)).await()
+            reactionsRef.document("angry").set(mapOf("value" to post.reactions.angry)).await()
+            reactionsRef.document("sad").set(mapOf("value" to post.reactions.sad)).await()
+            reactionsRef.document("heart").set(mapOf("value" to post.reactions.heart)).await()
+            reactionsRef.document("laugh").set(mapOf("value" to post.reactions.laugh)).await()
+            reactionsRef.document("confused").set(mapOf("value" to post.reactions.confused)).await()
+            reactionsRef.document("eyes").set(mapOf("value" to post.reactions.eyes)).await()
+            reactionsRef.document("heartEyes").set(mapOf("value" to post.reactions.heartEyes)).await()
+            reactionsRef.document("fire").set(mapOf("value" to post.reactions.fire)).await()
+
+            // Update cache (reactions not stored in Room)
             postDao.insertPost(post)
 
             Result.success(Unit)
@@ -87,7 +103,16 @@ class PostExtractor(private val context: Context) {
      */
     suspend fun removePost(postId: String): Result<Unit> = withContext(Dispatchers.IO) {
         try {
-            // Remove from Firestore
+            // Remove reactions subcollection
+            val reactionsRef = postsCollection.document(postId).collection("reactions")
+            val reactionTypes = listOf("likes", "loves", "hooray", "wows", "kisses", "emojis",
+                "angry", "sad", "heart", "laugh", "confused", "eyes", "heartEyes", "fire")
+
+            reactionTypes.forEach { type ->
+                reactionsRef.document(type).delete().await()
+            }
+
+            // Remove post from Firestore
             postsCollection.document(postId)
                 .delete()
                 .await()
@@ -103,24 +128,12 @@ class PostExtractor(private val context: Context) {
 
     /**
      * Fetch paginated posts with their authors (20 per page)
-     * Cache-first strategy: checks cache first, then Firestore if not sufficient
+     * Always fetches from Firestore to get latest reactions
      * @param page Page number (0-indexed)
      * @return Result containing list of PostWithAuthor
      */
     suspend fun fetchPostsPage(page: Int): Result<List<PostWithAuthor>> = withContext(Dispatchers.IO) {
         try {
-            val offset = page * PAGE_SIZE
-
-            // Try to get from cache first
-            val cachedPosts = postDao.getPostsPaginated(PAGE_SIZE, offset)
-
-            // If we have enough posts in cache, use them
-            if (cachedPosts.size == PAGE_SIZE) {
-                val postsWithAuthors = fetchAuthorsForPosts(cachedPosts)
-                return@withContext Result.success(postsWithAuthors)
-            }
-
-            // Otherwise, fetch from Firestore
             // Reset pagination if requesting first page
             if (page == 0) {
                 lastDocument = null
@@ -148,16 +161,16 @@ class PostExtractor(private val context: Context) {
                 lastDocument = querySnapshot.documents.last()
             }
 
-            // Parse posts from Firestore
+            // Parse posts from Firestore and fetch their reactions
             val posts = querySnapshot.documents.mapNotNull { doc ->
                 try {
-                    doc.toObject(Post::class.java)
+                    convertDocumentToPost(doc)
                 } catch (e: Exception) {
                     null
                 }
             }
 
-            // Update cache
+            // Update cache (reactions not stored in Room)
             if (posts.isNotEmpty()) {
                 postDao.insertPosts(posts)
             }
@@ -179,31 +192,26 @@ class PostExtractor(private val context: Context) {
     suspend fun fetchPostsByAuthor(authorId: String): Result<List<PostWithAuthor>> =
         withContext(Dispatchers.IO) {
             try {
-                // Try cache first
-                var posts = postDao.getPostsByAuthor(authorId)
+                // Fetch from Firestore
+                val querySnapshot = postsCollection
+                    .whereEqualTo("authorId", authorId)
+                    .whereEqualTo("isDeleted", false)
+                    .whereEqualTo("isBanned", false)
+                    .orderBy("createdAt", Query.Direction.DESCENDING)
+                    .get()
+                    .await()
 
-                // If not in cache, fetch from Firestore
-                if (posts.isEmpty()) {
-                    val querySnapshot = postsCollection
-                        .whereEqualTo("authorId", authorId)
-                        .whereEqualTo("isDeleted", false)
-                        .whereEqualTo("isBanned", false)
-                        .orderBy("createdAt", Query.Direction.DESCENDING)
-                        .get()
-                        .await()
-
-                    posts = querySnapshot.documents.mapNotNull { doc ->
-                        try {
-                            doc.toObject(Post::class.java)
-                        } catch (e: Exception) {
-                            null
-                        }
+                val posts = querySnapshot.documents.mapNotNull { doc ->
+                    try {
+                        convertDocumentToPost(doc)
+                    } catch (e: Exception) {
+                        null
                     }
+                }
 
-                    // Update cache
-                    if (posts.isNotEmpty()) {
-                        postDao.insertPosts(posts)
-                    }
+                // Update cache (reactions not stored in Room)
+                if (posts.isNotEmpty()) {
+                    postDao.insertPosts(posts)
                 }
 
                 // Fetch authors
@@ -223,27 +231,25 @@ class PostExtractor(private val context: Context) {
     suspend fun fetchPostWithAuthor(postId: String): Result<PostWithAuthor> =
         withContext(Dispatchers.IO) {
             try {
-                // Check cache first
-                var post = postDao.getPostById(postId)
+                // Fetch from Firestore (always get latest reactions)
+                val document = postsCollection.document(postId).get().await()
 
-                // If not in cache, fetch from Firestore
+                if (!document.exists()) {
+                    return@withContext Result.failure(Exception("Post not found"))
+                }
+
+                val post = convertDocumentToPost(document)
                 if (post == null) {
-                    val document = postsCollection.document(postId).get().await()
-
-                    if (document.exists()) {
-                        post = document.toObject(Post::class.java)
-                        if (post != null) {
-                            postDao.insertPost(post)
-                        }
-                    } else {
-                        return@withContext Result.failure(Exception("Post not found"))
-                    }
+                    return@withContext Result.failure(Exception("Failed to parse post"))
                 }
 
                 // Check if post is deleted or banned
-                if (post!!.isDeleted || post.isBanned) {
+                if (post.isDeleted || post.isBanned) {
                     return@withContext Result.failure(Exception("Post is not available"))
                 }
+
+                // Update cache (reactions not stored in Room)
+                postDao.insertPost(post)
 
                 // Fetch author
                 val authorResult = userExtractor.fetchCurrentUser(post.authorId)
@@ -284,6 +290,68 @@ class PostExtractor(private val context: Context) {
     }
 
     /**
+     * Update reaction for a post
+     * Reactions are stored in: /posts/{postId}/reactions/{reactionType}
+     * @param postId Post ID
+     * @param reactionType Type of reaction (likes, loves, wows, etc.)
+     * @param increment Amount to increment (positive or negative)
+     */
+    suspend fun updateReaction(postId: String, reactionType: String, increment: Int): Result<Unit> =
+        withContext(Dispatchers.IO) {
+            try {
+                // Update in Firestore subcollection
+                postsCollection.document(postId)
+                    .collection("reactions")
+                    .document(reactionType)
+                    .update("value", com.google.firebase.firestore.FieldValue.increment(increment.toLong()))
+                    .await()
+
+                Result.success(Unit)
+            } catch (e: Exception) {
+                Result.failure(e)
+            }
+        }
+
+    /**
+     * Fetch reactions for a specific post
+     * @param postId Post ID
+     * @return Result containing Reaction object
+     */
+    suspend fun fetchReactions(postId: String): Result<Reaction> = withContext(Dispatchers.IO) {
+        try {
+            val reactionsRef = postsCollection.document(postId).collection("reactions")
+            val reactionDocs = reactionsRef.get().await()
+
+            var reactions = Reaction()
+
+            reactionDocs.documents.forEach { reactionDoc ->
+                val value = reactionDoc.getLong("value")?.toInt() ?: 0
+                reactions = when (reactionDoc.id) {
+                    "likes" -> reactions.copy(likes = value)
+                    "loves" -> reactions.copy(loves = value)
+                    "hooray" -> reactions.copy(hooray = value)
+                    "wows" -> reactions.copy(wows = value)
+                    "kisses" -> reactions.copy(kisses = value)
+                    "emojis" -> reactions.copy(emojis = value)
+                    "angry" -> reactions.copy(angry = value)
+                    "sad" -> reactions.copy(sad = value)
+                    "heart" -> reactions.copy(heart = value)
+                    "laugh" -> reactions.copy(laugh = value)
+                    "confused" -> reactions.copy(confused = value)
+                    "eyes" -> reactions.copy(eyes = value)
+                    "heartEyes" -> reactions.copy(heartEyes = value)
+                    "fire" -> reactions.copy(fire = value)
+                    else -> reactions
+                }
+            }
+
+            Result.success(reactions)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    /**
      * Get cache statistics
      */
     suspend fun getCacheStats(): CacheStats = withContext(Dispatchers.IO) {
@@ -310,6 +378,70 @@ class PostExtractor(private val context: Context) {
      */
     fun resetPagination() {
         lastDocument = null
+    }
+
+    /**
+     * Convert Firestore document to Post
+     * Fetches reactions from subcollection: /posts/{postId}/reactions/{reactionType}
+     */
+    private suspend fun convertDocumentToPost(doc: DocumentSnapshot): Post? {
+        try {
+            val mediaUrls = doc.get("mediaUrls") as? List<*>
+            val hashtags = doc.get("hashtags") as? List<*>
+            val mentions = doc.get("mentions") as? List<*>
+
+            // Fetch all reaction documents from subcollection
+            val reactionsRef = postsCollection.document(doc.id).collection("reactions")
+            val reactionDocs = reactionsRef.get().await()
+
+            var reactions = Reaction()
+
+            reactionDocs.documents.forEach { reactionDoc ->
+                val value = reactionDoc.getLong("value")?.toInt() ?: 0
+                reactions = when (reactionDoc.id) {
+                    "likes" -> reactions.copy(likes = value)
+                    "loves" -> reactions.copy(loves = value)
+                    "hooray" -> reactions.copy(hooray = value)
+                    "wows" -> reactions.copy(wows = value)
+                    "kisses" -> reactions.copy(kisses = value)
+                    "emojis" -> reactions.copy(emojis = value)
+                    "angry" -> reactions.copy(angry = value)
+                    "sad" -> reactions.copy(sad = value)
+                    "heart" -> reactions.copy(heart = value)
+                    "laugh" -> reactions.copy(laugh = value)
+                    "confused" -> reactions.copy(confused = value)
+                    "eyes" -> reactions.copy(eyes = value)
+                    "heartEyes" -> reactions.copy(heartEyes = value)
+                    "fire" -> reactions.copy(fire = value)
+                    else -> reactions
+                }
+            }
+
+            return Post.create(
+                id = doc.id,
+                authorId = doc.getString("authorId") ?: "",
+                content = doc.getString("content") ?: "",
+                contentType = doc.getString("contentType") ?: "text",
+                mediaUrls = mediaUrls?.mapNotNull { it as? String } ?: emptyList(),
+                createdAt = doc.getLong("createdAt") ?: System.currentTimeMillis(),
+                updatedAt = doc.getLong("updatedAt") ?: System.currentTimeMillis(),
+                visibility = doc.getString("visibility") ?: "public",
+                location = doc.getString("location"),
+                reactions = reactions,
+                commentsCount = doc.getLong("commentsCount")?.toInt() ?: 0,
+                sharesCount = doc.getLong("sharesCount")?.toInt() ?: 0,
+                viewsCount = doc.getLong("viewsCount")?.toInt() ?: 0,
+                isSponsored = doc.getBoolean("isSponsored") ?: false,
+                isPinned = doc.getBoolean("isPinned") ?: false,
+                isDeleted = doc.getBoolean("isDeleted") ?: false,
+                isBanned = doc.getBoolean("isBanned") ?: false,
+                status = doc.getString("status") ?: "active",
+                hashtags = hashtags?.mapNotNull { it as? String } ?: emptyList(),
+                mentions = mentions?.mapNotNull { it as? String } ?: emptyList()
+            )
+        } catch (e: Exception) {
+            return null
+        }
     }
 
     /**
