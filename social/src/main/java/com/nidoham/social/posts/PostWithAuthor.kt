@@ -19,7 +19,6 @@ data class PostWithAuthor(
     val contentType: Story.ContentType get() = Story.ContentType.fromString(post.contentType)
     val createdAt: Long get() = post.createdAt
     val viewsCount: Int get() = post.viewsCount
-    val reactionsCount: Int get() = post.reactions.getTotalCount()
 
     /**
      * Quick access to author properties
@@ -44,7 +43,6 @@ data class PostWithAuthor(
             caption = caption,
             mediaUrl = mediaUrls.firstOrNull(),
             viewsCount = viewsCount,
-            reactionsCount = reactionsCount,
             isPremium = isAuthorPremium
         )
     }
@@ -61,7 +59,6 @@ data class PostWithAuthor(
         val caption: String?,
         val mediaUrl: String?,
         val viewsCount: Int,
-        val reactionsCount: Int,
         val isPremium: Boolean
     )
 }
