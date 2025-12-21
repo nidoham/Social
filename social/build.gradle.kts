@@ -43,21 +43,30 @@ android {
 }
 
 dependencies {
-    // Firebase
+    /**
+     * Firebase dependencies
+     */
     implementation(platform(libs.firebase.bom))
     implementation(libs.firebase.analytics)
     implementation(libs.firebase.auth)
     implementation(libs.firebase.database)
     implementation(libs.firebase.firestore)
 
-    // Room Database
+    /**
+     * Room dependencies
+     */
     implementation(libs.androidx.room.runtime)
     implementation(libs.androidx.room.ktx)
     kapt(libs.androidx.room.compiler)
 
+    /**
+     * Gson dependencies
+     */
     implementation(libs.gson)
 
-    // Testing
+    /**
+     * Testing dependencies
+     */
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
