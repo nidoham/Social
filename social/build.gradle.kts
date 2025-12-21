@@ -71,7 +71,7 @@ afterEvaluate {
 
                 groupId = "com.github.nidoham"
                 artifactId = "Social"
-                version = "1.1.3"
+                version = "1.1.4"
 
                 pom {
                     name.set("Social Library")

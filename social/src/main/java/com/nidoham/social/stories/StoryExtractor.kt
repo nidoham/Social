@@ -1,6 +1,7 @@
 package com.nidoham.social.stories
 
 import android.content.Context
+import android.util.Log
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.Query
 import com.google.firebase.firestore.DocumentSnapshot
@@ -29,6 +30,7 @@ class StoryExtractor(private val context: Context) {
     private var lastDocument: DocumentSnapshot? = null
 
     companion object {
+        private const val TAG = "StoryExtractor"
         private const val PAGE_SIZE = 20
         private const val TWENTY_FOUR_HOURS_MS = 24 * 60 * 60 * 1000L
     }
@@ -51,8 +53,10 @@ class StoryExtractor(private val context: Context) {
             // Clean up expired stories
             cleanupExpiredStories()
 
+            Log.d(TAG, "Successfully pushed story: ${story.id}")
             Result.success(Unit)
         } catch (e: Exception) {
+            Log.e(TAG, "Failed to push story: ${story.id}", e)
             Result.failure(e)
         }
     }
@@ -72,8 +76,10 @@ class StoryExtractor(private val context: Context) {
             // Remove from cache
             storyDao.deleteStoryById(storyId)
 
+            Log.d(TAG, "Successfully removed story: $storyId")
             Result.success(Unit)
         } catch (e: Exception) {
+            Log.e(TAG, "Failed to remove story: $storyId", e)
             Result.failure(e)
         }
     }
@@ -81,14 +87,33 @@ class StoryExtractor(private val context: Context) {
     /**
      * Fetch paginated stories with their authors (20 per page)
      * Only returns stories from the last 24 hours
-     * Checks cache first, then Firestore if not sufficient
      * @param page Page number (0-indexed)
+     * @param force If true, skip cache and fetch directly from Firestore
      * @return Result containing list of StoryWithAuthor
      */
-    suspend fun fetchStoriesPage(page: Int): Result<List<StoryWithAuthor>> = withContext(Dispatchers.IO) {
+    suspend fun fetchStoriesPage(
+        page: Int,
+        force: Boolean = false
+    ): Result<List<StoryWithAuthor>> = withContext(Dispatchers.IO) {
         try {
             val currentTime = System.currentTimeMillis()
             val twentyFourHoursAgo = currentTime - TWENTY_FOUR_HOURS_MS
+
+            // Try cache first if not forcing refresh
+            if (!force && page == 0) {
+                val cachedStories = storyDao.getActiveStoriesPaginated(
+                    currentTime = currentTime,
+                    limit = PAGE_SIZE,
+                    offset = 0
+                )
+                if (cachedStories.isNotEmpty()) {
+                    val storiesWithAuthors = fetchAuthorsForStories(cachedStories)
+                    if (storiesWithAuthors.isNotEmpty()) {
+                        Log.d(TAG, "Returning ${storiesWithAuthors.size} stories from cache")
+                        return@withContext Result.success(storiesWithAuthors)
+                    }
+                }
+            }
 
             // Reset pagination if requesting first page
             if (page == 0) {
@@ -129,6 +154,7 @@ class StoryExtractor(private val context: Context) {
                         null
                     }
                 } catch (e: Exception) {
+                    Log.e(TAG, "Failed to parse story: ${doc.id}", e)
                     null
                 }
             }
@@ -142,8 +168,28 @@ class StoryExtractor(private val context: Context) {
             // Fetch authors for stories
             val storiesWithAuthors = fetchAuthorsForStories(stories)
 
+            Log.d(TAG, "Fetched ${storiesWithAuthors.size} stories from Firestore")
             Result.success(storiesWithAuthors)
         } catch (e: Exception) {
+            Log.e(TAG, "Failed to fetch stories page: $page", e)
+
+            // Fallback to cache on error
+            try {
+                val currentTime = System.currentTimeMillis()
+                val cachedStories = storyDao.getActiveStoriesPaginated(
+                    currentTime = currentTime,
+                    limit = PAGE_SIZE,
+                    offset = page * PAGE_SIZE
+                )
+                if (cachedStories.isNotEmpty()) {
+                    val storiesWithAuthors = fetchAuthorsForStories(cachedStories)
+                    Log.d(TAG, "Returning ${storiesWithAuthors.size} stories from cache (fallback)")
+                    return@withContext Result.success(storiesWithAuthors)
+                }
+            } catch (cacheError: Exception) {
+                Log.e(TAG, "Cache fallback also failed", cacheError)
+            }
+
             Result.failure(e)
         }
     }
@@ -151,103 +197,163 @@ class StoryExtractor(private val context: Context) {
     /**
      * Fetch stories by a specific author with author info
      * @param authorId Author's user ID
+     * @param force If true, skip cache and fetch directly from Firestore
      * @return Result containing list of StoryWithAuthor
      */
-    suspend fun fetchStoriesByAuthor(authorId: String): Result<List<StoryWithAuthor>> =
-        withContext(Dispatchers.IO) {
-            try {
-                val currentTime = System.currentTimeMillis()
-                val twentyFourHoursAgo = currentTime - TWENTY_FOUR_HOURS_MS
+    suspend fun fetchStoriesByAuthor(
+        authorId: String,
+        force: Boolean = false
+    ): Result<List<StoryWithAuthor>> = withContext(Dispatchers.IO) {
+        try {
+            val currentTime = System.currentTimeMillis()
+            val twentyFourHoursAgo = currentTime - TWENTY_FOUR_HOURS_MS
 
-                // Try cache first
-                var stories = storyDao.getStoriesByAuthor(authorId, currentTime)
-
-                // If not in cache, fetch from Firestore
-                if (stories.isEmpty()) {
-                    val querySnapshot = storiesCollection
-                        .whereEqualTo("authorId", authorId)
-                        .whereEqualTo("isDeleted", false)
-                        .whereEqualTo("isBanned", false)
-                        .whereGreaterThan("createdAt", twentyFourHoursAgo)
-                        .orderBy("createdAt", Query.Direction.DESCENDING)
-                        .get()
-                        .await()
-
-                    // Parse and filter by expiration
-                    stories = querySnapshot.documents.mapNotNull { doc ->
-                        try {
-                            val story = Story.fromMap(doc.data ?: emptyMap())
-                            // Filter by expiration
-                            if (story.expiresAt > currentTime && story.createdAt > twentyFourHoursAgo) {
-                                story
-                            } else {
-                                null
-                            }
-                        } catch (e: Exception) {
-                            null
-                        }
-                    }
-
-                    // Update cache
-                    if (stories.isNotEmpty()) {
-                        storyDao.insertStories(stories)
+            // Try cache first if not forcing refresh
+            if (!force) {
+                val cachedStories = storyDao.getStoriesByAuthor(authorId, currentTime)
+                if (cachedStories.isNotEmpty()) {
+                    val storiesWithAuthors = fetchAuthorsForStories(cachedStories)
+                    if (storiesWithAuthors.isNotEmpty()) {
+                        Log.d(TAG, "Returning ${storiesWithAuthors.size} stories for author $authorId from cache")
+                        return@withContext Result.success(storiesWithAuthors)
                     }
                 }
-
-                // Fetch author
-                val storiesWithAuthors = fetchAuthorsForStories(stories)
-
-                Result.success(storiesWithAuthors)
-            } catch (e: Exception) {
-                Result.failure(e)
             }
+
+            // Fetch from Firestore
+            val querySnapshot = storiesCollection
+                .whereEqualTo("authorId", authorId)
+                .whereEqualTo("isDeleted", false)
+                .whereEqualTo("isBanned", false)
+                .whereGreaterThan("createdAt", twentyFourHoursAgo)
+                .orderBy("createdAt", Query.Direction.DESCENDING)
+                .get()
+                .await()
+
+            // Parse and filter by expiration
+            val stories = querySnapshot.documents.mapNotNull { doc ->
+                try {
+                    val story = Story.fromMap(doc.data ?: emptyMap())
+                    // Filter by expiration
+                    if (story.expiresAt > currentTime && story.createdAt > twentyFourHoursAgo) {
+                        story
+                    } else {
+                        null
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to parse story: ${doc.id}", e)
+                    null
+                }
+            }
+
+            // Update cache
+            if (stories.isNotEmpty()) {
+                storyDao.insertStories(stories)
+            }
+
+            // Fetch author
+            val storiesWithAuthors = fetchAuthorsForStories(stories)
+
+            Log.d(TAG, "Fetched ${storiesWithAuthors.size} stories for author: $authorId from Firestore")
+            Result.success(storiesWithAuthors)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to fetch stories for author: $authorId", e)
+
+            // Fallback to cache on error
+            try {
+                val currentTime = System.currentTimeMillis()
+                val cachedStories = storyDao.getStoriesByAuthor(authorId, currentTime)
+                val storiesWithAuthors = fetchAuthorsForStories(cachedStories)
+                Log.d(TAG, "Returning ${storiesWithAuthors.size} stories from cache (fallback)")
+                return@withContext Result.success(storiesWithAuthors)
+            } catch (cacheError: Exception) {
+                Log.e(TAG, "Cache fallback failed", cacheError)
+            }
+
+            Result.failure(e)
         }
+    }
 
     /**
      * Fetch a single story with its author
      * @param storyId Story ID to fetch
+     * @param force If true, skip cache and fetch directly from Firestore
      * @return Result containing StoryWithAuthor
      */
-    suspend fun fetchStoryWithAuthor(storyId: String): Result<StoryWithAuthor> =
-        withContext(Dispatchers.IO) {
-            try {
-                // Check cache first
-                var story = storyDao.getStoryById(storyId)
+    suspend fun fetchStoryWithAuthor(
+        storyId: String,
+        force: Boolean = false
+    ): Result<StoryWithAuthor> = withContext(Dispatchers.IO) {
+        try {
+            var story: Story? = null
 
-                // If not in cache, fetch from Firestore
-                if (story == null) {
-                    val document = storiesCollection.document(storyId).get().await()
-
-                    if (document.exists()) {
-                        story = Story.fromMap(document.data ?: emptyMap())
-                        storyDao.insertStory(story)
-                    } else {
-                        return@withContext Result.failure(Exception("Story not found"))
+            // Try cache first if not forcing refresh
+            if (!force) {
+                story = storyDao.getStoryById(storyId)
+                if (story != null && story.isActive()) {
+                    val authorResult = userExtractor.fetchCurrentUser(story.authorId)
+                    if (authorResult.isSuccess) {
+                        val author = authorResult.getOrThrow()
+                        val storyWithAuthor = StoryWithAuthor(story, author)
+                        Log.d(TAG, "Returning story $storyId from cache")
+                        return@withContext Result.success(storyWithAuthor)
                     }
                 }
-
-                // Check if story is still active
-                if (!story.isActive()) {
-                    return@withContext Result.failure(Exception("Story is no longer active"))
-                }
-
-                // Fetch author
-                val authorResult = userExtractor.fetchCurrentUser(story.authorId)
-
-                if (authorResult.isFailure) {
-                    return@withContext Result.failure(
-                        Exception("Failed to fetch story author: ${authorResult.exceptionOrNull()?.message}")
-                    )
-                }
-
-                val author = authorResult.getOrThrow()
-                val storyWithAuthor = StoryWithAuthor(story, author)
-
-                Result.success(storyWithAuthor)
-            } catch (e: Exception) {
-                Result.failure(e)
             }
+
+            // Fetch from Firestore
+            val document = storiesCollection.document(storyId).get().await()
+
+            if (!document.exists()) {
+                return@withContext Result.failure(Exception("Story not found"))
+            }
+
+            story = Story.fromMap(document.data ?: emptyMap())
+
+            // Check if story is still active
+            if (!story.isActive()) {
+                return@withContext Result.failure(Exception("Story is no longer active"))
+            }
+
+            // Update cache
+            storyDao.insertStory(story)
+
+            // Fetch author
+            val authorResult = userExtractor.fetchCurrentUser(story.authorId)
+
+            if (authorResult.isFailure) {
+                return@withContext Result.failure(
+                    Exception("Failed to fetch story author: ${authorResult.exceptionOrNull()?.message}")
+                )
+            }
+
+            val author = authorResult.getOrThrow()
+            val storyWithAuthor = StoryWithAuthor(story, author)
+
+            Log.d(TAG, "Fetched story: $storyId from Firestore")
+            Result.success(storyWithAuthor)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to fetch story: $storyId", e)
+
+            // Fallback to cache on error
+            try {
+                val cachedStory = storyDao.getStoryById(storyId)
+                if (cachedStory != null && cachedStory.isActive()) {
+                    val authorResult = userExtractor.fetchCurrentUser(cachedStory.authorId)
+                    if (authorResult.isSuccess) {
+                        val author = authorResult.getOrThrow()
+                        val storyWithAuthor = StoryWithAuthor(cachedStory, author)
+                        Log.d(TAG, "Returning story from cache (fallback)")
+                        return@withContext Result.success(storyWithAuthor)
+                    }
+                }
+            } catch (cacheError: Exception) {
+                Log.e(TAG, "Cache fallback failed", cacheError)
+            }
+
+            Result.failure(e)
         }
+    }
 
     /**
      * Increment view count for a story
@@ -265,6 +371,13 @@ class StoryExtractor(private val context: Context) {
 
             Result.success(Unit)
         } catch (e: Exception) {
+            Log.e(TAG, "Failed to increment view count for story: $storyId", e)
+            // Still update cache even if Firestore fails
+            try {
+                storyDao.incrementViewCount(storyId)
+            } catch (cacheError: Exception) {
+                Log.e(TAG, "Cache update also failed", cacheError)
+            }
             Result.failure(e)
         }
     }
@@ -286,8 +399,10 @@ class StoryExtractor(private val context: Context) {
         try {
             storyDao.deleteAllStories()
             lastDocument = null
+            Log.d(TAG, "Cleared cache")
             Result.success(Unit)
         } catch (e: Exception) {
+            Log.e(TAG, "Failed to clear cache", e)
             Result.failure(e)
         }
     }
@@ -297,6 +412,7 @@ class StoryExtractor(private val context: Context) {
      */
     fun resetPagination() {
         lastDocument = null
+        Log.d(TAG, "Reset pagination")
     }
 
     /**
@@ -312,13 +428,9 @@ class StoryExtractor(private val context: Context) {
             val authorsMap = authorIds.map { authorId ->
                 async {
                     val result = userExtractor.fetchCurrentUser(authorId)
-                    if (result.isSuccess) {
-                        authorId to result.getOrNull()
-                    } else {
-                        authorId to null
-                    }
+                    authorId to result.getOrNull()
                 }
-            }.awaitAll().associate { it }
+            }.awaitAll().toMap()
 
             // Combine stories with their authors
             stories.mapNotNull { story ->
@@ -326,7 +438,8 @@ class StoryExtractor(private val context: Context) {
                 if (author != null) {
                     StoryWithAuthor(story, author)
                 } else {
-                    null // Skip stories where author couldn't be fetched
+                    Log.w(TAG, "Skipping story ${story.id} - author ${story.authorId} not found")
+                    null
                 }
             }
         }
@@ -335,8 +448,13 @@ class StoryExtractor(private val context: Context) {
      * Clean up expired stories from cache
      */
     private suspend fun cleanupExpiredStories() {
-        val currentTime = System.currentTimeMillis()
-        storyDao.deleteExpiredStories(currentTime)
+        try {
+            val currentTime = System.currentTimeMillis()
+            storyDao.deleteExpiredStories(currentTime)
+            Log.d(TAG, "Cleaned up expired stories")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to cleanup expired stories", e)
+        }
     }
 
     /**

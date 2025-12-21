@@ -141,23 +141,21 @@ class PostExtractor(private val context: Context) {
      * Fetch paginated posts with their authors (20 per page)
      * Uses cache-first strategy with background refresh
      * @param page Page number (0-indexed)
-     * @param forceRefresh Force fetch from Firestore even if cache exists
+     * @param force If true, skip cache and fetch directly from Firestore
      * @return Result containing list of PostWithAuthor
      */
     suspend fun fetchPostsPage(
         page: Int,
-        forceRefresh: Boolean = false
+        force: Boolean = false
     ): Result<List<PostWithAuthor>> = withContext(Dispatchers.IO) {
         try {
             // Try cache first if not forcing refresh
-            if (!forceRefresh && page == 0) {
+            if (!force && page == 0) {
                 val cachedPosts = postDao.getPostsPaginated(PAGE_SIZE, 0)
                 if (cachedPosts.isNotEmpty()) {
                     val postsWithAuthors = fetchAuthorsForPosts(cachedPosts)
                     if (postsWithAuthors.isNotEmpty()) {
                         Log.d(TAG, "Returning ${postsWithAuthors.size} posts from cache")
-                        // Refresh in background
-                        // Don't await this - let it update cache asynchronously
                         return@withContext Result.success(postsWithAuthors)
                     }
                 }
@@ -226,78 +224,90 @@ class PostExtractor(private val context: Context) {
     /**
      * Fetch posts by a specific author with author info
      * @param authorId Author's user ID
+     * @param force If true, skip cache and fetch directly from Firestore
      * @return Result containing list of PostWithAuthor
      */
-    suspend fun fetchPostsByAuthor(authorId: String): Result<List<PostWithAuthor>> =
-        withContext(Dispatchers.IO) {
-            try {
-                // Try cache first
+    suspend fun fetchPostsByAuthor(
+        authorId: String,
+        force: Boolean = false
+    ): Result<List<PostWithAuthor>> = withContext(Dispatchers.IO) {
+        try {
+            // Try cache first if not forcing refresh
+            if (!force) {
                 val cachedPosts = postDao.getPostsByAuthor(authorId)
                 if (cachedPosts.isNotEmpty()) {
                     val postsWithAuthors = fetchAuthorsForPosts(cachedPosts)
                     if (postsWithAuthors.isNotEmpty()) {
                         Log.d(TAG, "Returning ${postsWithAuthors.size} posts for author $authorId from cache")
-                        // Continue to fetch from Firestore in background
+                        return@withContext Result.success(postsWithAuthors)
                     }
                 }
-
-                // Fetch from Firestore
-                val querySnapshot = retryOperation {
-                    postsCollection
-                        .whereEqualTo(Fields.AUTHOR_ID, authorId)
-                        .whereEqualTo(Fields.IS_DELETED, false)
-                        .whereEqualTo(Fields.IS_BANNED, false)
-                        .orderBy(Fields.CREATED_AT, Query.Direction.DESCENDING)
-                        .get()
-                        .await()
-                }
-
-                val posts = querySnapshot.documents.mapNotNull { doc ->
-                    convertDocumentToPost(doc)
-                }
-
-                // Update cache
-                if (posts.isNotEmpty()) {
-                    postDao.insertPosts(posts)
-                }
-
-                // Fetch authors
-                val postsWithAuthors = fetchAuthorsForPosts(posts)
-
-                Log.d(TAG, "Fetched ${postsWithAuthors.size} posts for author: $authorId")
-                Result.success(postsWithAuthors)
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to fetch posts for author: $authorId", e)
-
-                // Fallback to cache
-                try {
-                    val cachedPosts = postDao.getPostsByAuthor(authorId)
-                    val postsWithAuthors = fetchAuthorsForPosts(cachedPosts)
-                    Log.d(TAG, "Returning ${postsWithAuthors.size} posts from cache (fallback)")
-                    return@withContext Result.success(postsWithAuthors)
-                } catch (cacheError: Exception) {
-                    Log.e(TAG, "Cache fallback failed", cacheError)
-                }
-
-                Result.failure(e)
             }
+
+            // Fetch from Firestore
+            val querySnapshot = retryOperation {
+                postsCollection
+                    .whereEqualTo(Fields.AUTHOR_ID, authorId)
+                    .whereEqualTo(Fields.IS_DELETED, false)
+                    .whereEqualTo(Fields.IS_BANNED, false)
+                    .orderBy(Fields.CREATED_AT, Query.Direction.DESCENDING)
+                    .get()
+                    .await()
+            }
+
+            val posts = querySnapshot.documents.mapNotNull { doc ->
+                convertDocumentToPost(doc)
+            }
+
+            // Update cache
+            if (posts.isNotEmpty()) {
+                postDao.insertPosts(posts)
+            }
+
+            // Fetch authors
+            val postsWithAuthors = fetchAuthorsForPosts(posts)
+
+            Log.d(TAG, "Fetched ${postsWithAuthors.size} posts for author: $authorId from Firestore")
+            Result.success(postsWithAuthors)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to fetch posts for author: $authorId", e)
+
+            // Fallback to cache on error
+            try {
+                val cachedPosts = postDao.getPostsByAuthor(authorId)
+                val postsWithAuthors = fetchAuthorsForPosts(cachedPosts)
+                Log.d(TAG, "Returning ${postsWithAuthors.size} posts from cache (fallback)")
+                return@withContext Result.success(postsWithAuthors)
+            } catch (cacheError: Exception) {
+                Log.e(TAG, "Cache fallback failed", cacheError)
+            }
+
+            Result.failure(e)
         }
+    }
 
     /**
      * Fetch a single post with its author
      * @param postId Post ID to fetch
+     * @param force If true, skip cache and fetch directly from Firestore
      * @return Result containing PostWithAuthor
      */
-    suspend fun fetchPostWithAuthor(postId: String): Result<PostWithAuthor> = withContext(Dispatchers.IO) {
+    suspend fun fetchPostWithAuthor(
+        postId: String,
+        force: Boolean = false
+    ): Result<PostWithAuthor> = withContext(Dispatchers.IO) {
         try {
-            // Try cache first
-            val cachedPost = postDao.getPostById(postId)
-            if (cachedPost != null && !cachedPost.isDeleted && !cachedPost.isBanned) {
-                val authorResult = userExtractor.fetchCurrentUser(cachedPost.authorId)
-                if (authorResult.isSuccess) {
-                    val author = authorResult.getOrThrow()
-                    Log.d(TAG, "Returning post $postId from cache")
-                    // Continue to fetch from Firestore in background
+            // Try cache first if not forcing refresh
+            if (!force) {
+                val cachedPost = postDao.getPostById(postId)
+                if (cachedPost != null && !cachedPost.isDeleted && !cachedPost.isBanned) {
+                    val authorResult = userExtractor.fetchCurrentUser(cachedPost.authorId)
+                    if (authorResult.isSuccess) {
+                        val author = authorResult.getOrThrow()
+                        val postWithAuthor = PostWithAuthor(cachedPost, author)
+                        Log.d(TAG, "Returning post $postId from cache")
+                        return@withContext Result.success(postWithAuthor)
+                    }
                 }
             }
 
@@ -332,12 +342,12 @@ class PostExtractor(private val context: Context) {
             val author = authorResult.getOrThrow()
             val postWithAuthor = PostWithAuthor(post, author)
 
-            Log.d(TAG, "Fetched post: $postId")
+            Log.d(TAG, "Fetched post: $postId from Firestore")
             Result.success(postWithAuthor)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to fetch post: $postId", e)
 
-            // Fallback to cache
+            // Fallback to cache on error
             try {
                 val cachedPost = postDao.getPostById(postId)
                 if (cachedPost != null) {
