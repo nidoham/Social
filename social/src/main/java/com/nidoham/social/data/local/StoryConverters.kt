@@ -14,19 +14,6 @@ class StoryConverters {
     // JSON কনফিগারেশন (লেনিয়েন্ট মোড)
     private val json = Json { ignoreUnknownKeys = true }
 
-    // ============= List<String> Converter =============
-    @TypeConverter
-    fun fromList(value: List<String>): String {
-        return json.encodeToString(value)
-    }
-
-    @TypeConverter
-    fun toList(value: String): List<String> {
-        return runCatching {
-            json.decodeFromString<List<String>>(value)
-        }.getOrDefault(emptyList())
-    }
-
     // ============= StoryType Enum Converter =============
     @TypeConverter
     fun fromStoryType(type: StoryType): String = type.name

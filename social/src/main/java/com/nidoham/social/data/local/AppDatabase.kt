@@ -13,15 +13,16 @@ import com.nidoham.social.user.User
     entities = [
         User::class,
         Story::class,
-        Post::class // Post এন্টিটি
+        Post::class
     ],
     version = 1,
     exportSchema = false
 )
 @TypeConverters(
+    CommonConverters::class,      // ✅ নতুন যোগ করুন (List<String>)
     UserTypeConverters::class,
     StoryConverters::class,
-    PostConverters::class // Post কনভার্টার
+    PostConverters::class
 )
 abstract class AppDatabase : RoomDatabase() {
 
