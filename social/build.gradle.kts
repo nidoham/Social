@@ -2,7 +2,10 @@ plugins {
     alias(libs.plugins.android.library)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.maven.publish)
-    id("kotlin-kapt")
+    alias(libs.plugins.ksp)
+    id("kotlin-parcelize")
+    alias(libs.plugins.hilt)
+    id("org.jetbrains.kotlin.plugin.serialization") version "2.3.0"
 }
 
 android {
@@ -30,8 +33,8 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    kotlinOptions {
-        jvmTarget = "17"
+    kotlin {
+        jvmToolchain(17)
     }
 
     publishing {
@@ -53,20 +56,26 @@ dependencies {
     implementation(libs.firebase.firestore)
 
     /**
-     * Room dependencies
+     * Room Database (Using KSP)
      */
     implementation(libs.androidx.room.runtime)
     implementation(libs.androidx.room.ktx)
-    kapt(libs.androidx.room.compiler)
+    implementation(libs.androidx.paging.common)
+    ksp(libs.androidx.room.compiler)
 
     /**
      * Gson dependencies
      */
     implementation(libs.gson)
+    implementation(libs.kotlinx.serialization.json)
 
     /**
      * Testing dependencies
      */
+    // ---------- Hilt ----------
+    implementation(libs.hilt.android)
+    ksp(libs.hilt.compiler)
+
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
@@ -80,7 +89,7 @@ afterEvaluate {
 
                 groupId = "com.github.nidoham"
                 artifactId = "Social"
-                version = "1.1.4"
+                version = "1.2.1"
 
                 pom {
                     name.set("Social Library")

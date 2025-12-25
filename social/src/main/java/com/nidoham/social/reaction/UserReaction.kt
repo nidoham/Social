@@ -1,72 +1,37 @@
 package com.nidoham.social.reaction
 
+import java.util.Locale
+
 /**
- * Represents an individual user's reaction on a post or comment
- * Used for displaying who reacted and with what type
+ * Get top N reaction types for display (e.g., showing icons of top 3 reactions)
  */
-data class UserReaction(
-    val userId: String,
-    val reactionType: Reaction.Type,
-    val timestamp: Long
-) {
-    /**
-     * Convert to Firestore map
-     */
-    fun toMap(): Map<String, Any> {
-        return mapOf(
-            "userId" to userId,
-            "reactionType" to reactionType.key,
-            "timestamp" to timestamp
-        )
-    }
+fun Reaction.getTopReactions(limit: Int = 3): List<Pair<ReactionType, Int>> {
+    return ReactionType.entries
+        .map { it to getCount(it) }
+        .filter { it.second > 0 } // যাদের কাউন্ট ০ এর বেশি শুধু তাদের নেবে
+        .sortedByDescending { it.second } // বড় থেকে ছোট সাজাবে
+        .take(limit)
+}
 
-    companion object {
-        /**
-         * Create UserReaction from Firestore map
-         */
-        fun fromMap(userId: String, map: Map<String, Any?>): UserReaction? {
-            val reactionTypeKey = map["reactionType"] as? String ?: return null
-            val reactionType = Reaction.Type.fromKey(reactionTypeKey) ?: return null
-            val timestamp = (map["timestamp"] as? Number)?.toLong() ?: System.currentTimeMillis()
+/**
+ * UI Display String: "1.2K likes, 50 love"
+ */
+fun Reaction.formatForDisplay(maxItems: Int = 2): String {
+    if (total == 0) return "No reactions"
 
-            return UserReaction(
-                userId = userId,
-                reactionType = reactionType,
-                timestamp = timestamp
-            )
+    return getTopReactions(maxItems)
+        .joinToString(", ") { (type, count) ->
+            "${count.compactFormat()} ${type.key}"
         }
-    }
 }
 
 /**
- * Extension functions for UserReaction
+ * Compact number formatter (1200 -> 1.2K)
  */
-
-/**
- * Check if reaction was made recently (within last 5 minutes)
- */
-fun UserReaction.isRecent(): Boolean {
-    val fiveMinutesAgo = System.currentTimeMillis() - (5 * 60 * 1000)
-    return timestamp >= fiveMinutesAgo
-}
-
-/**
- * Get time elapsed since reaction in seconds
- */
-fun UserReaction.getElapsedSeconds(): Long {
-    return (System.currentTimeMillis() - timestamp) / 1000
-}
-
-/**
- * Format elapsed time for display
- * Example: "2m ago", "1h ago", "3d ago"
- */
-fun UserReaction.getFormattedElapsedTime(): String {
-    val seconds = getElapsedSeconds()
+private fun Int.compactFormat(): String {
     return when {
-        seconds < 60 -> "just now"
-        seconds < 3600 -> "${seconds / 60}m ago"
-        seconds < 86400 -> "${seconds / 3600}h ago"
-        else -> "${seconds / 86400}d ago"
+        this >= 1_000_000 -> String.format(Locale.US, "%.1fM", this / 1_000_000.0)
+        this >= 1_000 -> String.format(Locale.US, "%.1fK", this / 1_000.0)
+        else -> this.toString()
     }
 }
