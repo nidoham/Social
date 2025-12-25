@@ -1,7 +1,6 @@
 package com.nidoham.social.stories
 
 import android.os.Parcelable
-import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.ForeignKey
 import androidx.room.Index
@@ -18,10 +17,10 @@ import kotlinx.serialization.Serializable
 @Entity(
     tableName = "stories",
     indices = [
-        Index(value = ["authorId"]),
-        Index(value = ["expiresAt"]),
-        Index(value = ["createdAt"]),
-        Index(value = ["visibility"])
+        Index(name = "idx_stories_authorId", value = ["authorId"]),
+        Index(name = "idx_stories_expiresAt", value = ["expiresAt"]),
+        Index(name = "idx_stories_createdAt", value = ["createdAt"]),
+        Index(name = "idx_stories_visibility", value = ["visibility"])
     ],
     foreignKeys = [
         ForeignKey(
@@ -36,7 +35,7 @@ data class Story(
     @PrimaryKey
     val id: String = "",
 
-    @ColumnInfo(index = true)
+    // ← @ColumnInfo(index = true) DELETE করা হয়েছে
     @SerialName("author_id")
     val authorId: String = "",
 

@@ -1,7 +1,6 @@
 package com.nidoham.social.posts
 
 import android.os.Parcelable
-import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.ForeignKey
 import androidx.room.Index
@@ -18,9 +17,9 @@ import kotlinx.serialization.Serializable
 @Entity(
     tableName = "posts",
     indices = [
-        Index(value = ["authorId"]),
-        Index(value = ["createdAt"]),
-        Index(value = ["visibility"])
+        Index(name = "idx_posts_authorId", value = ["authorId"]),
+        Index(name = "idx_posts_createdAt", value = ["createdAt"]),
+        Index(name = "idx_posts_visibility", value = ["visibility"])
     ],
     foreignKeys = [
         ForeignKey(
@@ -35,7 +34,7 @@ data class Post(
     @PrimaryKey
     val id: String = "",
 
-    @ColumnInfo(index = true)
+    // ← @ColumnInfo(index = true) DELETE করা হয়েছে
     @SerialName("author_id")
     val authorId: String = "",
 
